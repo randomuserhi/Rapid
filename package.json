@@ -15,5 +15,9 @@
   "bugs": {
     "url": "https://github.com/randomuserhi/Rapid/issues"
   },
-  "homepage": "https://github.com/randomuserhi/Rapid#readme"
+  "homepage": "https://github.com/randomuserhi/Rapid#readme",
+  "dependencies": {
+    "babel": "^6.23.0",
+    "typescript": "^5.9.3"
+  }
 }
