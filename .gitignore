@@ -1,4 +1,4 @@
 build/
+scripts/build/
 node_modules/
-asl-js/
 .vscode/
