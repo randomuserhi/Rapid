@@ -19,11 +19,15 @@
   },
   "homepage": "https://github.com/randomuserhi/Rapid#readme",
   "dependencies": {
-    "babel": "^6.23.0",
+    "@babel/core": "^7.28.4",
+    "@babel/preset-env": "^7.28.3",
+    "@babel/template": "^7.27.2",
     "chokidar": "^4.0.3",
     "typescript": "^5.9.3"
   },
   "devDependencies": {
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__template": "^7.4.4",
     "@types/node": "^24.9.1"
   }
 }
