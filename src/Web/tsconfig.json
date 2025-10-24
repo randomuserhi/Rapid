@@ -1,15 +1,15 @@
 {
     "extends": "../../tsconfig.json",
     "compilerOptions": {
-        "types": [
-            "node"
-        ],
-        "module": "node16",
-        "moduleResolution": "node16",
+        "types": [],
+        "module": "es2022",
         "rootDir": ".",
         "outDir": "./build",
+        "paths": {
+            // path fixes...
+        }
     },
     "include": [
-        "./**/*.cts"
+        "./**/*.ts"
     ]
 }
