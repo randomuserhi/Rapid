@@ -12,6 +12,8 @@ function run(cmd: string, label: string) {
 
 try {
   run("npx tsc -p ./src/Server/tsconfig.json", "server");
+  run("npx tsc -p ./src/ASL/Transpiler/tsconfig.json", "aslTranspiler");
+  run("npx tsc -p ./src/ASL/Runtime/tsconfig.json", "aslRuntime");
   console.log("\nBuild complete!");
 } catch {
   console.error("\nBuild failed.");

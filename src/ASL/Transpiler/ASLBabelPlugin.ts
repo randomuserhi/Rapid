@@ -1,9 +1,19 @@
-const template = require("@babel/template");
+// TODO(randomuserhi): Refine and test this...
+// TODO(randomuserhi): Cleanup and comment code...
+// TODO(randomuserhi): Adapt to ASL runtime
 
-// TODO(randomuserhi): Move to separate project and document + make more maintainable 
-// NOTE(randomuserhi): Doesnt support default export or export * for now...
+import type * as BabelCoreNamespace from '@babel/core';
+import type * as BabelTypesNamespace from '@babel/types';
+import type { PluginObj } from '@babel/core';
 
-module.exports = function ({ types: t }) {
+export type Babel = typeof BabelCoreNamespace;
+export type BabelTypes = typeof BabelTypesNamespace;
+
+import { statement } from "@babel/template";
+
+export default function (babel: Babel): PluginObj {
+    const t = babel.types;
+
     return {
         visitor: {
             Program(path) {
@@ -32,13 +42,14 @@ module.exports = function ({ types: t }) {
                                     defaultSpecifiers.push(`const ${localName} = (await require("${source}", "${type}")).default`);
                                 } break;
                                 case "ImportSpecifier": {
+                                    if (!t.isIdentifier(specifier.imported)) throw new Error(`Unsupported Identifier - TODO(support this...)`);
                                     const importName = specifier.imported.name;
                                     importSpecifiers.push(importName === localName ? localName : `${importName}: ${localName}`);
                                 } break;
                                 case "ImportNamespaceSpecifier": {
                                     namespaceSpecifiers.push(`const ${localName} = await require("${source}", "${type}")`);
                                 } break;
-                                default: throw new Error(`Unknown specifier '${specifier.type}'`);
+                                default: throw new Error(`Unknown specifier '${(specifier as any).type}'`);
                             }
                         }
 
@@ -46,7 +57,7 @@ module.exports = function ({ types: t }) {
                         if (defaultSpecifiers.length > 0) statements.push(defaultSpecifiers.join(";\n"));
                         if (importSpecifiers.length > 0) statements.push(`const { ${importSpecifiers.join(", ")} } = await require("${source}", "${type}")`);
                         if (namespaceSpecifiers.length > 0) statements.push(namespaceSpecifiers.join(";\n"));
-                        path.replaceWith(template.statement.ast`${statements.join(";\n")}`);
+                        path.replaceWith(statement.ast`${statements.join(";\n")}`);
                     },
                     CallExpression(path) {
                         if (t.isImport(path.node.callee)) {
@@ -61,7 +72,7 @@ module.exports = function ({ types: t }) {
                 if (usedDynamicImport) console.warn("NOTE: The babel compiler for ASL only supports dynamic imports to non-esm modules.");
 
                 // Manage renaming `module` and `require` as they are default to ASL
-                const identifiersToRename = [];
+                const identifiersToRename: BabelCoreNamespace.NodePath<BabelTypesNamespace.Identifier>[] = [];
                 path.traverse({
                     Identifier(path) {
                         if (path.node.name === "module" || path.node.name === "exports") {
@@ -73,7 +84,7 @@ module.exports = function ({ types: t }) {
                 // Handle exports
                 path.traverse({
                     ExportDeclaration(path) {
-                        const rebind = (name) => {
+                        const rebind = (name: string) => {
                             path.scope.bindings[name].referencePaths.forEach((refPath) => {
                                 if (refPath === path) return;
                                 refPath.replaceWith(t.memberExpression(
@@ -83,7 +94,7 @@ module.exports = function ({ types: t }) {
                             });
                             path.scope.bindings[name].constantViolations.forEach((refPath) => {
                                 if (refPath === path) return;
-                                if (t.isAssignmentExpression(refPath)) {
+                                if (t.isAssignmentExpression(refPath.node)) {
                                     refPath.get("left").replaceWith(t.memberExpression(
                                         t.identifier('exports'),
                                         t.identifier(name)
@@ -97,6 +108,8 @@ module.exports = function ({ types: t }) {
                                 const declaration = path.node.declaration;
                                 if (t.isFunctionDeclaration(declaration)) {
                                     const { id, params, body, generator, async } = declaration;
+                                    if (!id) throw new Error("Cannot export unnamed function");
+
                                     path.replaceWith(t.expressionStatement(t.assignmentExpression(
                                         '=',
                                         t.memberExpression(t.identifier('exports'), t.identifier(id.name)),
@@ -106,6 +119,8 @@ module.exports = function ({ types: t }) {
                                     rebind(id.name);
                                 } else if (t.isVariableDeclaration(declaration)) {
                                     path.replaceWithMultiple(declaration.declarations.map((declarator) => {
+                                        if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
+
                                         if (declarator.init) {
                                             return t.expressionStatement(t.assignmentExpression(
                                                 '=',
@@ -121,10 +136,13 @@ module.exports = function ({ types: t }) {
                                     }));
 
                                     declaration.declarations.forEach((declarator) => {
+                                        if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
+
                                         rebind(declarator.id.name);
                                     });
                                 } else if (t.isClassDeclaration(declaration)) {
                                     const { id, superClass, body, decorators } = declaration;
+                                    if (!id) throw new Error("Cannot export unnamed class");
 
                                     path.replaceWith(t.expressionStatement(t.assignmentExpression(
                                         '=',
