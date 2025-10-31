@@ -4,10 +4,16 @@
  * @randomuserhi 2025
  */
 
-export class ASLRuntime {
+class Registry {
+    private cache = new Map<string, any>();
 
+    public fetch() {
+        // fetch module...
+    }
 }
 
-export class ASLEnvironment {
+const registry = new Registry;
+
+export class Environment {
 
 }
