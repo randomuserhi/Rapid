@@ -2,11 +2,11 @@
   "name": "rapid",
   "version": "1.0.0",
   "description": "",
-  "main": "build/App.js",
+  "main": "build/Rapid/App.cjs",
   "type": "module",
   "scripts": {
     "make": "npx tsc -p ./scripts/tsconfig.json && node scripts/build/make.js",
-    "start": "node build/App.cjs"
+    "start": "node build/Rapid/App.cjs"
   },
   "repository": {
     "type": "git",

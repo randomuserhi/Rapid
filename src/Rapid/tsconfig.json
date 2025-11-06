@@ -9,8 +9,9 @@
         ],
         "module": "nodenext",
         "moduleResolution": "nodenext",
-        "rootDir": ".",
+        "rootDir": "./src",
         "outDir": "./build",
+        "tsBuildInfoFile": "./.tsbuildinfo"
     },
     "include": [
         "./**/*.cts"

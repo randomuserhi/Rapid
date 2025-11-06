@@ -9,7 +9,7 @@
         "strictNullChecks": true,
         "strictFunctionTypes": true,
         "forceConsistentCasingInFileNames": true,
-        "removeComments": true,
+        "removeComments": false,
         "sourceMap": false
     }
 }
