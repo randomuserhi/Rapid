@@ -150,6 +150,9 @@ class ASLRegistry {
         
             // Add to map of pending requests
             this.pending.set(path, promise);
+
+            // When request finishes, remove from pending
+            promise.finally(() => this.pending.delete(path));
         }
 
         return promise;
@@ -218,6 +221,9 @@ export class ASLEnvironment {
 
             // Add to map of pending requests
             this.pending.set(path, promise);
+
+            // When request finishes, remove from pending
+            promise.finally(() => this.pending.delete(path));
         }
 
         return promise;
