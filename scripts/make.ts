@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
+import { cp, mkdir, rm } from 'fs/promises';
 import path from "path";
-import { rm, mkdir, cp, copyFile } from 'fs/promises';
 
 console.log(process.argv);
 
