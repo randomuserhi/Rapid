@@ -3,8 +3,8 @@
 // TODO(randomuserhi): Adapt to ASL runtime
 
 import type * as BabelCoreNamespace from '@babel/core';
-import type * as BabelTypesNamespace from '@babel/types';
 import type { PluginObj } from '@babel/core';
+import type * as BabelTypesNamespace from '@babel/types';
 
 export type Babel = typeof BabelCoreNamespace;
 export type BabelTypes = typeof BabelTypesNamespace;

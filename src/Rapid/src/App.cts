@@ -4,4 +4,4 @@ import { ASLEnvironment } from "./ASL/Runtime/ASLRuntime.cjs";
 
 const env = new ASLEnvironment();
 
-Promise.all([env.fetch("C:\\Users\\User\\Documents\\test.js")]);
+Promise.all([env.fetch("E:\\test.js")]);
