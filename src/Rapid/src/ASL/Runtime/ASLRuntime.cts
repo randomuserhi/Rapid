@@ -89,7 +89,7 @@ class ASLRegistry {
     /** 
      * Dependency map of module to ASL environment.
      * 
-     * When a given module is hot reloaded, we know which environments are effected.
+     * When a given module is hot reloaded, we know which environments are affected.
      */
     private dependencies = new Map<string, Set<ASLEnvironment>>();
 
@@ -129,7 +129,7 @@ class ASLRegistry {
                     File.readFile(path, { encoding: "utf-8" })
                         .then(code => {
                             // Create module function.
-                            // This runs in an async function as it ASL needs to support the `await` keyword.
+                            // This runs in an async function as ASL needs to support the `await` keyword at the top-level.
                             // The function has the parameters `aslImport`, `module` and `exports` to provide the necessary keywords.
                             const moduleFunc = (new Function(`return (async function(aslImport, module, exports) {\n${code}\n}).bind(undefined); //# sourceURL=${path}`))() as ASLModuleFunc;
 
