@@ -71,7 +71,7 @@ interface ASLModule {
     /**
      * Executes the given module, returning the module object containing its exports.
      */
-    exec: () => Promise<ASLModuleObject>;
+    exec: (aslImport: any) => Promise<ASLModuleObject>;
 }
 
 /**
@@ -135,7 +135,7 @@ class ASLRegistry {
 
                             // Create module info
                             const moduleInfo = {
-                                exec: execModule.bind(undefined, moduleFunc) as ASLModule["exec"]
+                                exec: this.execModule.bind(this, moduleFunc)
                             };
 
                             // Add to cache
@@ -157,6 +157,16 @@ class ASLRegistry {
 
         return promise;
     }
+
+    /**
+     * Executes the given module, providing the necessary parameters.
+     * 
+     * @param moduleFunc The ASLModuleFunc of the module being executed.
+     */
+    private async execModule(moduleFunc: ASLModuleFunc, aslImport: any): Promise<ASLModuleObject> { 
+        await moduleFunc(aslImport, {}, {});
+        return {};
+    }
 }
 
 /**
@@ -165,16 +175,6 @@ class ASLRegistry {
  * Keeps track of which environments depend on which modules for hot reloading.
  */
 export const registry = new ASLRegistry();
-
-/**
- * Executes the given module, providing the necessary parameters.
- * 
- * @param moduleFunc The ASLModuleFunc of the module being executed.
- */
-async function execModule(moduleFunc: ASLModuleFunc): Promise<ASLModuleObject> {
-    await moduleFunc({}, {}, {});
-    return {};
-}
 
 /**
  * ASL Environment.
@@ -187,6 +187,24 @@ export class ASLEnvironment {
 
     /** Stores pending fetch requests for modules. */
     private pending = new Map<string, CancellablePromise<ASLModuleObject>>();
+
+    /** Cached import function bound to the given environment. */
+    private aslImport: any;
+
+    constructor() {
+        this.aslImport = this.import.bind(this);
+    }
+
+    /**
+     * Import function used by executing modules when they are executed to import other modules into
+     * the given environment.
+     * 
+     * @param path File path to module
+     * @param options Import options
+     */
+    private async import(path: string, options: any) {
+        return await (this.fetch(path).promise);
+    }
 
     /**
      * Loads a module into the environment
@@ -210,7 +228,7 @@ export class ASLEnvironment {
                 } else {
                     // If its not in cache or pending, make a request to fetch it
                     registry.fetch(path, this)
-                        .then(info => info.exec())
+                        .then(info => info.exec(this.aslImport))
                         .then((obj) => {
                             this.cache.set(path, obj);
                             resolve(obj);
