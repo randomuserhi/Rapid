@@ -58,6 +58,12 @@ class CancellablePromise<T> {
  */
 type ASLModuleObject = Record<PropertyKey, any>;
 
+/** Function that imports another module from an ASL module execution context. */
+type ASLEnvImportFunc = (module: ASLModule, path: string, options?: any) => Promise<ASLModuleObject>;
+
+/** Function that imports another module from an ASL module execution context. */
+type ASLImportFunc = (path: string, options?: any) => Promise<ASLModuleObject>;
+
 /**
  * ASL module function.
  * 
@@ -65,13 +71,25 @@ type ASLModuleObject = Record<PropertyKey, any>;
  * @param module Object containing module information.
  * @param exports Object containing the modules exports.
  */
-type ASLModuleFunc = (aslImport: any, module: any, exports: ASLModuleObject) => Promise<void>;
+type ASLModuleFunc = (aslImport: ASLImportFunc, module: any, exports: ASLModuleObject) => Promise<void>;
 
-interface ASLModule {
+/**
+ * ASLModule information.
+ * 
+ * Contains information about the module, such as its archetype and execution function.
+ */
+class ASLModule {
+    /** Module path (normalized) */
+    readonly path: string;
+
     /**
      * Executes the given module, returning the module object containing its exports.
      */
-    exec: (aslImport: any) => Promise<ASLModuleObject>;
+    readonly exec: (aslImport: any) => Promise<ASLModuleObject> = undefined!;
+
+    constructor(path: string) {
+        this.path = path;
+    }
 }
 
 /**
@@ -82,6 +100,9 @@ interface ASLModule {
 class ASLRegistry {
     /** Module cache. Maps module file path to the cached module info. */
     private cache = new Map<string, ASLModule>();
+
+    /** Module archetype cache. */
+    private archetypeCache = new Map<ASLModule, CancellablePromise<any>>();
 
     /** Stores pending fetch requests for modules. */
     private pending = new Map<string, CancellablePromise<ASLModule>>();
@@ -134,9 +155,8 @@ class ASLRegistry {
                             const moduleFunc = (new Function(`return (async function(aslImport, module, exports) {\n${code}\n}).bind(undefined); //# sourceURL=${path}`))() as ASLModuleFunc;
 
                             // Create module info
-                            const moduleInfo = {
-                                exec: this.execModule.bind(this, moduleFunc)
-                            };
+                            const moduleInfo = new ASLModule(path);
+                            (moduleInfo as any).exec = this.execModule.bind(this, moduleInfo, moduleFunc);
 
                             // Add to cache
                             this.cache.set(path, moduleInfo);
@@ -163,9 +183,24 @@ class ASLRegistry {
      * 
      * @param moduleFunc The ASLModuleFunc of the module being executed.
      */
-    private async execModule(moduleFunc: ASLModuleFunc, aslImport: any): Promise<ASLModuleObject> { 
-        await moduleFunc(aslImport, {}, {});
+    private async execModule(module: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> { 
+        await moduleFunc(this.aslImport.bind(this, module, envImport), {}, {});
         return {};
+    }
+
+    private async aslImport(module: ASLModule, envImport: ASLEnvImportFunc, path: string, options?: any) {
+        return await envImport(module, path, options);
+    }
+
+    /**
+     * Invalidates a module, causing it to reload any of its dependencies.
+     * Affects all environments that include the invalidated module.
+     * 
+     * @param path Module to mark as invalidated
+     */
+    public async invalidate(path: string): Promise<void> {
+        // Normalize the path as we use path to index modules
+        path = Path.normalize(path);
     }
 }
 
@@ -188,12 +223,8 @@ export class ASLEnvironment {
     /** Stores pending fetch requests for modules. */
     private pending = new Map<string, CancellablePromise<ASLModuleObject>>();
 
-    /** Cached import function bound to the given environment. */
-    private aslImport: any;
-
-    constructor() {
-        this.aslImport = this.import.bind(this);
-    }
+    /** Cached import function pre-bound to the given environment. */
+    private readonly aslImport: ASLEnvImportFunc = this.import.bind(this);
 
     /**
      * Import function used by executing modules when they are executed to import other modules into
@@ -202,7 +233,7 @@ export class ASLEnvironment {
      * @param path File path to module
      * @param options Import options
      */
-    private async import(path: string, options: any) {
+    private async import(module: ASLModule, path: string, options?: any) {
         return await (this.fetch(path).promise);
     }
 
