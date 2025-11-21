@@ -4,6 +4,8 @@
  * @randomuserhi 2025
  */
 
+// TODO(randomuserhi): Improved documentation with more detail
+
 import File from "fs/promises";
 import Path from "path";
 
@@ -58,6 +60,9 @@ class CancellablePromise<T> {
  */
 type ASLModuleObject = Record<PropertyKey, any>;
 
+/** Module ID type */
+type ASLModuleId = number;
+
 /** Function that imports another module from an ASL module execution context. */
 type ASLEnvImportFunc = (module: ASLModule, path: string, options?: any) => Promise<ASLModuleObject>;
 
@@ -82,13 +87,17 @@ class ASLModule {
     /** Module path (normalized) */
     readonly path: string;
 
+    /** Module id */
+    readonly mid: ASLModuleId;
+
     /**
      * Executes the given module, returning the module object containing its exports.
      */
     readonly exec: (aslImport: any) => Promise<ASLModuleObject> = undefined!;
 
-    constructor(path: string) {
+    constructor(mid: ASLModuleId, path: string) {
         this.path = path;
+        this.mid = mid;
     }
 }
 
@@ -98,53 +107,88 @@ class ASLModule {
  * Manages cache invalidation as well as hot reloading.
  */
 class ASLRegistry {
-    /** Module cache. Maps module file path to the cached module info. */
-    private cache = new Map<string, ASLModule>();
+    /** 
+     * Module path to module-id map. 
+     * 
+     * We use id aliases for modules as they are shorter and can be easily casted to string keys.
+     */
+    private readonly mid = new Map<string, ASLModuleId>();
 
-    /** Module archetype cache. */
-    private archetypeCache = new Map<ASLModule, CancellablePromise<any>>();
+    /**
+     * Module id to path.
+     */
+    private readonly paths = new Map<ASLModuleId, string>();
+
+    /**
+     * Internal id counter.
+     */
+    private _mid = 0;
+
+    /**
+     * Get the module id for a given module file.
+     * If the file has not been registered yet, assigns a new id.
+     * 
+     * @param path Path to module file.
+     * @returns module id
+     */
+    public getMid(path: string) {
+        // Normalize path
+        path = Path.normalize(path);
+
+        let mid = this.mid.get(path);
+        if (mid === undefined) {
+            mid = this._mid++;
+
+            this.mid.set(path, mid);
+            this.paths.set(mid, path);
+        }
+        return mid;
+    }
+
+    /** Module cache. Maps module file path to the cached module info. */
+    private readonly cache = new Map<ASLModuleId, ASLModule>();
 
     /** Stores pending fetch requests for modules. */
-    private pending = new Map<string, CancellablePromise<ASLModule>>();
+    private readonly pending = new Map<ASLModuleId, CancellablePromise<ASLModule>>();
 
     /** 
      * Dependency map of module to ASL environment.
      * 
      * When a given module is hot reloaded, we know which environments are affected.
      */
-    private dependencies = new Map<string, Set<ASLEnvironment>>();
+    private readonly dependencies = new Map<ASLModuleId, Set<ASLEnvironment>>();
 
     /**
      * Loads a module into cache.
      * 
-     * @param path File path to module
+     * @param mid module id to fetch
      * @param env Environment that is fetching the module - used internally for book keeping dependencies for hot reloading
      * @returns The loaded module information
      */
-    public fetch(path: string, env?: ASLEnvironment): CancellablePromise<ASLModule> {
-        // Normalize the path as we use path to index modules
-        path = Path.normalize(path);
+    public fetch(mid: ASLModuleId, env?: ASLEnvironment): CancellablePromise<ASLModule> {
+        const path = this.paths.get(mid);
+        if (path === undefined) throw new Error(`Failed to obtain path for module id: ${mid}`);
 
         // Add dependency
         if (env !== undefined) {
-            let dependencySet = this.dependencies.get(path);
+            let dependencySet = this.dependencies.get(mid);
             if (dependencySet === undefined) {
                 dependencySet = new Set();
-                this.dependencies.set(path, dependencySet);
+                this.dependencies.set(mid, dependencySet);
             }
             dependencySet.add(env);
         }
 
         // Get pending request if module has been loaded before but is still waiting.
-        let promise = this.pending.get(path);
+        let promise = this.pending.get(mid);
 
         if (promise === undefined) {
             // If module is not pending, create the request
 
             promise = new CancellablePromise<ASLModule>((resolve, reject) => {
                 // Try get module from cache
-                if (this.cache.has(path)) {
-                    resolve(this.cache.get(path)!);
+                if (this.cache.has(mid)) {
+                    resolve(this.cache.get(mid)!);
                 } else {
                     // If its not in cache or pending, make a request to fetch it
                     File.readFile(path, { encoding: "utf-8" })
@@ -155,11 +199,11 @@ class ASLRegistry {
                             const moduleFunc = (new Function(`return (async function(aslImport, module, exports) {\n${code}\n}).bind(undefined); //# sourceURL=${path}`))() as ASLModuleFunc;
 
                             // Create module info
-                            const moduleInfo = new ASLModule(path);
+                            const moduleInfo = new ASLModule(mid, path);
                             (moduleInfo as any).exec = this.execModule.bind(this, moduleInfo, moduleFunc);
 
                             // Add to cache
-                            this.cache.set(path, moduleInfo);
+                            this.cache.set(mid, moduleInfo);
 
                             // Resolve request
                             resolve(moduleInfo);
@@ -167,12 +211,12 @@ class ASLRegistry {
                         .catch(e => reject(e));
                 }
             });
-        
+
             // Add to map of pending requests
-            this.pending.set(path, promise);
+            this.pending.set(mid, promise);
 
             // When request finishes, remove from pending
-            promise.finally(() => this.pending.delete(path));
+            promise.finally(() => this.pending.delete(mid));
         }
 
         return promise;
@@ -183,13 +227,10 @@ class ASLRegistry {
      * 
      * @param moduleFunc The ASLModuleFunc of the module being executed.
      */
-    private async execModule(module: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> { 
-        await moduleFunc(this.aslImport.bind(this, module, envImport), {}, {});
+    private async execModule(module: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
+        // TODO(randomuserhi): Finish implementation
+        await moduleFunc(envImport.bind(undefined, module), {}, {});
         return {};
-    }
-
-    private async aslImport(module: ASLModule, envImport: ASLEnvImportFunc, path: string, options?: any) {
-        return await envImport(module, path, options);
     }
 
     /**
@@ -199,8 +240,7 @@ class ASLRegistry {
      * @param path Module to mark as invalidated
      */
     public async invalidate(path: string): Promise<void> {
-        // Normalize the path as we use path to index modules
-        path = Path.normalize(path);
+        const mid = this.getMid(path);
     }
 }
 
@@ -211,6 +251,89 @@ class ASLRegistry {
  */
 export const registry = new ASLRegistry();
 
+type ASLArchetypeId = string;
+
+/**
+ * Descibes the archetype (what modules depend on other modules).
+ * Used to manage dependency tree.
+ * 
+ * Modules are stored using mid instead of their path. 
+ * This is because they can be serialized into keys.
+ */
+class ASLArchetype {
+    readonly type: ASLModuleId[];
+    readonly typeId: ASLArchetypeId;
+
+    /** 
+     * Map of archetypes that stem of this one. 
+     * As a module imports another, it traverses the add map to find the archetype it belongs to.
+     */
+    readonly addMap = new Map<ASLModuleId, ASLArchetype>();
+
+    private constructor(type: ASLModuleId[], typeId: ASLArchetypeId) {
+        this.type = type;
+        this.typeId = typeId;
+    }
+
+    public static createArchetype(type: ASLModuleId[] = []) {
+        type = [...type.sort()];
+        return new ASLArchetype(type.sort(), type.join(","));
+    }
+
+    /**
+     * Traverses the achetype map to return the new archetype when the given module id is added.
+     * Creates a new archetype if it did not already exist in the provided cache.
+     * 
+     * TODO(randomuserhi): Move into ASLEnvironment class, so that we do not have to pass the cache as a parameter?
+     *                     Also ensures that archetypes do not cross-contaminate as `addMap` must contain only
+     *                     archetypes that can be found within the provided `cache`.
+     * 
+     * @param mid Module id being added to the current archetype
+     * @param cache Cache of existing archetypes
+     * @returns Archetype after adding the given module
+     */
+    public traverse(mid: ASLModuleId, cache: Map<ASLArchetypeId, ASLArchetype>): ASLArchetype {
+        // Check add map if we have cached the traversal path
+        let arch = this.addMap.get(mid);
+        if (arch !== undefined) {
+            return arch;
+        }
+
+        let insertLocation = 0;
+        let high = this.type.length;
+
+        while (insertLocation < high) {
+            let middle = (insertLocation + high) >>> 1;
+            if (this.type[middle] < mid) {
+                insertLocation = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+
+        // Module already exists in our archetype
+        if (this.type[insertLocation] === mid) return this;
+
+        // Create a new archetype that contains this module
+        let newType = [...this.type];
+        newType.splice(insertLocation, 0, mid);
+
+        const newTypeId = newType.join(",");
+
+        // Try and get archetype from cache
+        arch = cache.get(newTypeId);
+        if (arch === undefined) {
+            arch = new ASLArchetype(newType, newTypeId);
+            cache.set(newTypeId, arch);
+        }
+
+        // Add to traversal cache (addMap)
+        this.addMap.set(mid, arch);
+
+        return arch;
+    }
+}
+
 /**
  * ASL Environment.
  * 
@@ -218,13 +341,41 @@ export const registry = new ASLRegistry();
  */
 export class ASLEnvironment {
     /** Module cache. Maps module file path to the cached module object. */
-    private cache = new Map<string, ASLModuleObject>();
+    private readonly cache = new Map<ASLModuleId, ASLModuleObject>();
 
     /** Stores pending fetch requests for modules. */
-    private pending = new Map<string, CancellablePromise<ASLModuleObject>>();
+    private readonly pending = new Map<ASLModuleId, CancellablePromise<ASLModuleObject>>();
 
     /** Cached import function pre-bound to the given environment. */
     private readonly aslImport: ASLEnvImportFunc = this.import.bind(this);
+
+    /** 
+     * Archetype tracking for modules.
+     * 
+     * Per environment as scripts may have environment-based dependencies.
+     * Such as the case when modules dynamically import other modules based on user input.
+     */
+    private readonly rootArchetype = ASLArchetype.createArchetype();
+
+    /**
+     * Archetype associated with each loaded module.
+     */
+    private readonly moduleArchetype = new Map<ASLModuleId, ASLArchetype>();
+
+    /**
+     * Map of all archetypes managed by the environment
+     */
+    private readonly archetypes = new Map<ASLArchetypeId, ASLArchetype>();
+
+    constructor() {
+        this.archetypes.set(this.rootArchetype.typeId, this.rootArchetype);
+    }
+
+    // TODO(randomuserhi): Debug function, probably remove at somepoint
+    public getArchetype(mid?: ASLModuleId) {
+        if (mid === undefined) return this.rootArchetype;
+        return this.moduleArchetype.get(mid);
+    }
 
     /**
      * Import function used by executing modules when they are executed to import other modules into
@@ -234,45 +385,101 @@ export class ASLEnvironment {
      * @param options Import options
      */
     private async import(module: ASLModule, path: string, options?: any) {
-        return await (this.fetch(path).promise);
+        // TODO(randomuserhi): Resolve relative paths ...
+
+        const mid = registry.getMid(path);
+
+        // TODO(randomuserhi): Standardize error message
+        if (mid === module.mid) throw new Error("Cannot import self.");
+
+        // Update modules archetype as approapriate
+        const arch = this.moduleArchetype.get(module.mid)!;
+        this.moduleArchetype.set(module.mid, arch.traverse(mid, this.archetypes));
+
+        return await (this.fetch(mid).promise);
     }
+
+    /**
+     * Initializes internal book keeping for the given module
+     * 
+     * @param mid Module id
+     */
+    private initModule(mid: ASLModuleId) {
+        // Assign default module archetype
+        this.moduleArchetype.set(mid, this.rootArchetype);
+    }
+
+    /**
+     * Clears internal book keeping for the given module
+     * 
+     * @param mid Module id
+     */
+    private destructModule(mid: ASLModuleId) {
+        // Remove module archetype
+        this.moduleArchetype.delete(mid);
+    }
+
+    /**
+     * Loads a module into the environment
+     * 
+     * @param mid module id
+     */
+    public fetch(mid: number): CancellablePromise<ASLModuleObject>
 
     /**
      * Loads a module into the environment
      * 
      * @param path File path to module
      */
-    public fetch(path: string): CancellablePromise<ASLModuleObject> {
-        // Normalize the path as we use path to index modules
-        path = Path.normalize(path);
+    public fetch(path: string): CancellablePromise<ASLModuleObject>
+
+    public fetch(mid: string | number) {
+        // Resolve mid from path
+        if (typeof mid === "string") {
+            mid = registry.getMid(mid);
+        }
 
         // Get pending request if module has been loaded before but is still waiting.
-        let promise = this.pending.get(path);
+        let promise = this.pending.get(mid);
 
         if (promise === undefined) {
             // If module is not pending, create the request
 
             promise = new CancellablePromise<ASLModuleObject>((resolve, reject) => {
                 // Try get module from cache
-                if (this.cache.has(path)) {
-                    resolve(this.cache.get(path)!);
+                if (this.cache.has(mid)) {
+                    resolve(this.cache.get(mid)!);
                 } else {
                     // If its not in cache or pending, make a request to fetch it
-                    registry.fetch(path, this)
-                        .then(info => info.exec(this.aslImport))
+                    registry.fetch(mid, this)
+                        .then(info => {
+                            // Initialize internal module state:
+                            this.initModule(mid);
+
+                            // Execute module
+                            return info.exec(this.aslImport);
+                        })
                         .then((obj) => {
-                            this.cache.set(path, obj);
+                            // Store module object into cache
+                            this.cache.set(mid, obj);
+
+                            // Resolve promise
                             resolve(obj);
                         })
-                        .catch(e => reject(e));
+                        .catch(e => {
+                            // Cleanup module resources
+                            this.destructModule(mid);
+
+                            reject(e);
+                        });
                 }
             });
 
             // Add to map of pending requests
-            this.pending.set(path, promise);
+            this.pending.set(mid, promise);
 
             // When request finishes, remove from pending
-            promise.finally(() => this.pending.delete(path));
+            promise.finally(() => this.pending.delete(mid));
         }
 
         return promise;
