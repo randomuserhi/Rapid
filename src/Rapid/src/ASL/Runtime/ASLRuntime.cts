@@ -16,15 +16,17 @@ class CancellablePromise<T> {
     readonly promise: Promise<T>;
     readonly cancel: (reason?: any) => void;
     readonly isCancelled: boolean = false; 
+    readonly cancelReason?: any;
 
-    constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void, self: CancellablePromise<T>) => void, oncancel?: () => void) {
+    constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void, self: CancellablePromise<T>) => void, oncancel?: (reason?: any) => void) {
         this.cancel = undefined!;
         this.promise = new Promise((resolve, reject) => {
-            (this as any).cancel = () => {
+            (this as any).cancel = (reason?: any) => {
+                if (this.isCancelled) return;
                 (this as any).isCancelled = true;
-                oncancel?.();
-                // TODO(randomuserhi): Standardise error and type
-                reject(new Error("Cancelled Promise"));
+                (this as any).cancelReason = reason;
+                oncancel?.(reason);
+                reject(reason);
             };
             executor(resolve, reject, this);
         });
@@ -339,6 +341,12 @@ interface ASLRequest {
 }
 
 /**
+ * ASL module unload signal. 
+ * Used to indicate when execution was cancelled due to unloading the module rather than an error or other reason.
+ */
+const ASL_SIGNAL_MODULE_UNLOAD = {};
+
+/**
  * ASL Environment.
  * 
  * TODO(randomuserhi): documentation
@@ -478,13 +486,13 @@ export class ASLEnvironment {
      * @param mid Module to unload
      * @param unloadedModules set of modules that were unloaded
      */
-    private _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>) {
+    private async _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>) {
         // If module is pending, cancel it
         const request = this.pending.get(mid);
         if (request !== undefined) {
-            request.promise.cancel();
-
-            console.log(this.pending);
+            // Pass `ASL_SIGNAL_MODULE_UNLOAD` so that cancel logic knows that 
+            // ASL has handled everything already internally.
+            request.promise.cancel(ASL_SIGNAL_MODULE_UNLOAD);
 
             // We have to immediately remove from pending dict to prevent stack overflow
             // as the `finally()` call won't call until next async event
@@ -641,6 +649,14 @@ export class ASLEnvironment {
 
             // When request finishes, remove from pending
             promise.catch(noop).finally(() => {
+                // On unload signal, skip handling as it is already handled automatically by ASL synchronously
+                // by the `unload` method.
+                // 
+                // This is because we cannot trust order of execution by JS engine's micro-tasks.
+                // Pending needs to be deleted on cancel, before we re-request execution of the modules,
+                // but this is not guaranteed if we rely on JS micro-task scheduling.
+                if (promise.cancelReason === ASL_SIGNAL_MODULE_UNLOAD) return;
+                
                 this.pending.delete(mid);
             });
         }
