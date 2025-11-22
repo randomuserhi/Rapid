@@ -486,16 +486,21 @@ export class ASLEnvironment {
      * @param mid Module to unload
      * @param unloadedModules set of modules that were unloaded
      */
-    private async _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>) {
+    private _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>) {
         // If module is pending, cancel it
         const request = this.pending.get(mid);
         if (request !== undefined) {
             // Pass `ASL_SIGNAL_MODULE_UNLOAD` so that cancel logic knows that 
-            // ASL has handled everything already internally.
+            // ASL has handled everything already synchronously and the async task should not
+            // handle it.
+            //
+            // Refer to `this.fetch`
             request.promise.cancel(ASL_SIGNAL_MODULE_UNLOAD);
 
-            // We have to immediately remove from pending dict to prevent stack overflow
-            // as the `finally()` call won't call until next async event
+            // We have to handle removal from pending dict synchronously to prevent stack overflow
+            // as the `finally()` call that normally handles this in `this.fetch` won't call until next
+            // async micro-task event - which won't occure until after this synchronous function 
+            // executes.
             this.pending.delete(mid);
         } else if (!this.cache.delete(mid)) {
             // Otherwise, if it is in cache, delete it. If it is not in the cache, 
