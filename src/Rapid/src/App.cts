@@ -1,16 +1,14 @@
 // Temporary test code for ASL
 
-import { ASLEnvironment, registry } from "./ASL/Runtime/ASLRuntime.cjs";
+import { ASLEnvironment } from "./ASL/Runtime/ASLRuntime.cjs";
 
 const env = new ASLEnvironment();
 
-// const test = "E:\\test.js";
-const test = "C:\\Users\\User\\Documents\\test.js";
+const test = "E:\\test.js";
+const test2 = "E:\\test2.js";
 
-Promise.all([env.fetch(test)]).then(() => {
-    console.log((registry as any).dependencies);
-    console.log((registry as any).pending);
+const p = env.fetch(test);
 
-    console.log(env.getArchetype());
-    console.log(env.getArchetype(registry.getMid(test)));
-});
+setTimeout(() => {
+    console.log((env as any).pending);
+}, 1000);
