@@ -245,6 +245,9 @@ class ASLRegistry {
      */
     private async execModule(module: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
         // TODO(randomuserhi): Finish implementation
+        //                     For module ready state (as in declaring a module as completed earlier) -> simply resolve this promise on the ready() call
+        //                     probably need to return a promise object directly so we can call `resolve` out of sync with the return, but this should work
+
         await moduleFunc(envImport.bind(undefined, module), {}, {});
         return {};
     }
