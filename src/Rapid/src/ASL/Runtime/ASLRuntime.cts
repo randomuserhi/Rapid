@@ -344,12 +344,36 @@ interface ASLRequest {
  * ASL module unload signal. 
  * Used to indicate when execution was cancelled due to unloading the module rather than an error or other reason.
  */
-const ASL_SIGNAL_MODULE_UNLOAD = {};
+const ASL_SIGNAL_MODULE_UNLOAD = Symbol("ASL.SIGNAL_MODULE_UNLOAD");
+
+/**
+ * Error that happens when execution of a module is cancelled
+ */
+class ASLExecutionCancelledError extends Error {
+    constructor() {
+        super("Execution was cancelled.");
+        this.name = "ASLExecutionCancelledError";
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, ASLExecutionCancelledError);
+        }
+    }
+}
+
+/**
+ * Error that occure whilst importing modules
+ */
+class ASLImportError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ASLImportError";
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, ASLImportError);
+        }
+    }
+}
 
 /**
  * ASL Environment.
- * 
- * TODO(randomuserhi): documentation
  */
 export class ASLEnvironment {
     /** Module cache. Maps module file path to the cached module object. */
@@ -462,16 +486,14 @@ export class ASLEnvironment {
      * @param options Import options
      */
     private import(promise: CancellablePromise<ASLModuleObject>, module: ASLModule, path: string, options?: any): Promise<ASLModuleObject> {
-        // TODO(randomuserhi): Standardize error message & type
-        if (promise.isCancelled) throw new Error("Execution was cancelled.");
+        if (promise.isCancelled) throw new ASLExecutionCancelledError();
         
         // TODO(randomuserhi): Resolve relative paths ...
         // TODO(randomuserhi): ESM / Require type imports
 
         const mid = registry.getMid(path);
 
-        // TODO(randomuserhi): Standardize error message & type
-        if (mid === module.mid) throw new Error("Cannot import self.");
+        if (mid === module.mid) throw new ASLImportError("Cannot import self.");
 
         // Update modules archetype as approapriate
         const arch = this.moduleArchetype.get(module.mid)!;
