@@ -4,8 +4,6 @@
  * @randomuserhi 2025
  */
 
-// TODO(randomuserhi): Improved documentation with more detail
-
 import File from "fs/promises";
 import Path from "path";
 
@@ -482,9 +480,9 @@ export class ASLEnvironment {
      */
     private _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>) {
         // If module is pending, cancel it
-        const pending = this.pending.get(mid);
-        if (pending !== undefined) {
-            pending.promise.cancel();
+        const request = this.pending.get(mid);
+        if (request !== undefined) {
+            request.promise.cancel();
 
             console.log(this.pending);
 
