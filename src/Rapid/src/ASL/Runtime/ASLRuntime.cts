@@ -239,17 +239,41 @@ class ASLRegistry {
     }
 
     /**
+     * Proxy handler for `module` metadata object in ASL
+     */
+    private static moduleProxyHandler: ProxyHandler<any> = {
+        set() {
+            // silently immutable
+            return false;
+        }
+    } as const;
+
+    /**
      * Executes the given module, providing the necessary parameters.
      * 
      * @param moduleFunc The ASLModuleFunc of the module being executed.
      */
-    private async execModule(module: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
-        // TODO(randomuserhi): Finish implementation
-        //                     For module ready state (as in declaring a module as completed earlier) -> simply resolve this promise on the ready() call
-        //                     probably need to return a promise object directly so we can call `resolve` out of sync with the return, but this should work
+    private execModule(context: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
+        return new Promise((resolve) => {
+            let mutable = true;
 
-        await moduleFunc(envImport.bind(undefined, module), {}, {});
-        return {};
+            const exports = new Proxy<Record<PropertyKey, any>>({}, {
+                set(exports, prop, newValue) {
+                    if (!mutable) throw new Error(`You cannot alter exports once a module has loaded.`);
+                    exports[prop] = newValue;
+                    return true;
+                }
+            });
+
+            const module = new Proxy({
+                ready: () => {
+                    mutable = false;
+                    resolve(exports);
+                }
+            }, ASLRegistry.moduleProxyHandler);
+
+            moduleFunc(envImport.bind(undefined, context), module, exports).then(() => module.ready());
+        });
     }
 
     /**
@@ -411,15 +435,6 @@ export class ASLEnvironment {
     constructor() {
         // Register root archetype
         this.archetypes.set(this.rootArchetype.typeId, this.rootArchetype);
-    }
-
-    // TODO(randomuserhi): Debug function, probably remove at somepoint
-    public getArchetype(mid?: ASLModuleId) {
-        if (mid === undefined) return this.rootArchetype;
-        return this.moduleArchetype.get(mid);
-    }
-    public getTypemap() {
-        return this.typemap;
     }
 
     /**
