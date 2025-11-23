@@ -38,18 +38,18 @@ export default function (babel: Babel): PluginObj {
                         for (const specifier of specifiers) {
                             const localName = specifier.local.name;
                             switch (specifier.type) {
-                                case "ImportDefaultSpecifier": {
-                                    defaultSpecifiers.push(`const ${localName} = (await require("${source}", "${type}")).default`);
-                                } break;
-                                case "ImportSpecifier": {
-                                    if (!t.isIdentifier(specifier.imported)) throw new Error(`Unsupported Identifier - TODO(support this...)`);
-                                    const importName = specifier.imported.name;
-                                    importSpecifiers.push(importName === localName ? localName : `${importName}: ${localName}`);
-                                } break;
-                                case "ImportNamespaceSpecifier": {
-                                    namespaceSpecifiers.push(`const ${localName} = await require("${source}", "${type}")`);
-                                } break;
-                                default: throw new Error(`Unknown specifier '${(specifier as any).type}'`);
+                            case "ImportDefaultSpecifier": {
+                                defaultSpecifiers.push(`const ${localName} = (await require("${source}", "${type}")).default`);
+                            } break;
+                            case "ImportSpecifier": {
+                                if (!t.isIdentifier(specifier.imported)) throw new Error(`Unsupported Identifier - TODO(support this...)`);
+                                const importName = specifier.imported.name;
+                                importSpecifiers.push(importName === localName ? localName : `${importName}: ${localName}`);
+                            } break;
+                            case "ImportNamespaceSpecifier": {
+                                namespaceSpecifiers.push(`const ${localName} = await require("${source}", "${type}")`);
+                            } break;
+                            default: throw new Error(`Unknown specifier '${(specifier as any).type}'`);
                             }
                         }
 
@@ -104,71 +104,71 @@ export default function (babel: Babel): PluginObj {
                         };
 
                         switch (path.node.type) {
-                            case "ExportNamedDeclaration": {
-                                const declaration = path.node.declaration;
-                                if (t.isFunctionDeclaration(declaration)) {
-                                    const { id, params, body, generator, async } = declaration;
-                                    if (!id) throw new Error("Cannot export unnamed function");
+                        case "ExportNamedDeclaration": {
+                            const declaration = path.node.declaration;
+                            if (t.isFunctionDeclaration(declaration)) {
+                                const { id, params, body, generator, async } = declaration;
+                                if (!id) throw new Error("Cannot export unnamed function");
 
-                                    path.replaceWith(t.expressionStatement(t.assignmentExpression(
-                                        '=',
-                                        t.memberExpression(t.identifier('exports'), t.identifier(id.name)),
-                                        t.functionExpression(undefined, params, body, generator, async)
-                                    )));
+                                path.replaceWith(t.expressionStatement(t.assignmentExpression(
+                                    '=',
+                                    t.memberExpression(t.identifier('exports'), t.identifier(id.name)),
+                                    t.functionExpression(undefined, params, body, generator, async)
+                                )));
 
-                                    rebind(id.name);
-                                } else if (t.isVariableDeclaration(declaration)) {
-                                    path.replaceWithMultiple(declaration.declarations.map((declarator) => {
-                                        if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
+                                rebind(id.name);
+                            } else if (t.isVariableDeclaration(declaration)) {
+                                path.replaceWithMultiple(declaration.declarations.map((declarator) => {
+                                    if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
 
-                                        if (declarator.init) {
-                                            return t.expressionStatement(t.assignmentExpression(
-                                                '=',
-                                                t.memberExpression(t.identifier('exports'), t.identifier(declarator.id.name)),
-                                                declarator.init
-                                            ));
-                                        }
+                                    if (declarator.init) {
                                         return t.expressionStatement(t.assignmentExpression(
                                             '=',
                                             t.memberExpression(t.identifier('exports'), t.identifier(declarator.id.name)),
-                                            t.identifier('undefined')
+                                            declarator.init
                                         ));
-                                    }));
-
-                                    declaration.declarations.forEach((declarator) => {
-                                        if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
-
-                                        rebind(declarator.id.name);
-                                    });
-                                } else if (t.isClassDeclaration(declaration)) {
-                                    const { id, superClass, body, decorators } = declaration;
-                                    if (!id) throw new Error("Cannot export unnamed class");
-
-                                    path.replaceWith(t.expressionStatement(t.assignmentExpression(
+                                    }
+                                    return t.expressionStatement(t.assignmentExpression(
                                         '=',
-                                        t.memberExpression(t.identifier('exports'), t.identifier(id.name)),
-                                        t.classExpression(undefined, superClass, body, decorators)
-                                    )));
+                                        t.memberExpression(t.identifier('exports'), t.identifier(declarator.id.name)),
+                                        t.identifier('undefined')
+                                    ));
+                                }));
 
-                                    rebind(id.name);
-                                } else {
-                                    const specifiers = path.node.specifiers;
+                                declaration.declarations.forEach((declarator) => {
+                                    if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
 
-                                    path.replaceWithMultiple(specifiers.map((specifier) => {
-                                        switch (specifier.type) {
-                                            case "ExportSpecifier": {
-                                                return t.expressionStatement(t.assignmentExpression(
-                                                    '=',
-                                                    t.memberExpression(t.identifier('exports'), specifier.exported),
-                                                    specifier.local
-                                                ));
-                                            }
-                                            default: throw new Error(`[ExportNamedDeclaration] Unknown specifier '${specifier.type}'`);
-                                        }
-                                    }));
-                                }
-                            } break;
-                            default: throw new Error(`Unsupported export type '${path.node.type}'`);
+                                    rebind(declarator.id.name);
+                                });
+                            } else if (t.isClassDeclaration(declaration)) {
+                                const { id, superClass, body, decorators } = declaration;
+                                if (!id) throw new Error("Cannot export unnamed class");
+
+                                path.replaceWith(t.expressionStatement(t.assignmentExpression(
+                                    '=',
+                                    t.memberExpression(t.identifier('exports'), t.identifier(id.name)),
+                                    t.classExpression(undefined, superClass, body, decorators)
+                                )));
+
+                                rebind(id.name);
+                            } else {
+                                const specifiers = path.node.specifiers;
+
+                                path.replaceWithMultiple(specifiers.map((specifier) => {
+                                    switch (specifier.type) {
+                                    case "ExportSpecifier": {
+                                        return t.expressionStatement(t.assignmentExpression(
+                                            '=',
+                                            t.memberExpression(t.identifier('exports'), specifier.exported),
+                                            specifier.local
+                                        ));
+                                    }
+                                    default: throw new Error(`[ExportNamedDeclaration] Unknown specifier '${specifier.type}'`);
+                                    }
+                                }));
+                            }
+                        } break;
+                        default: throw new Error(`Unsupported export type '${path.node.type}'`);
                         }
                     }
                 });
