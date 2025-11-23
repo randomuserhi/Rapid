@@ -78,10 +78,10 @@ type ASLModuleObject = Record<PropertyKey, any>;
 type ASLModuleId = number;
 
 /** Function that imports another module from an ASL module execution context. */
-type ASLEnvImportFunc = (module: ASLModule, path: string, options?: any) => Promise<ASLModuleObject>;
+type ASLEnvImportFunc = (module: ASLModule, path: string, options?: ASLImportOptions) => Promise<ASLModuleObject>;
 
 /** Function that imports another module from an ASL module execution context. */
-type ASLImportFunc = (path: string, options?: any) => Promise<ASLModuleObject>;
+type ASLImportFunc = (path: string, options?: ASLImportOptions) => Promise<ASLModuleObject>;
 
 /**
  * ASL module function.
@@ -93,6 +93,13 @@ type ASLImportFunc = (path: string, options?: any) => Promise<ASLModuleObject>;
 type ASLModuleFunc = (aslImport: ASLImportFunc, module: any, exports: ASLModuleObject) => Promise<void>;
 
 /**
+ * Import options when using `require` in an ASL script
+ */
+interface ASLImportOptions {
+    type?: "asl" | "cjs" | "esm"
+}
+
+/**
  * ASLModule information.
  * 
  * Contains information about the module, such as its archetype and execution function.
@@ -100,6 +107,9 @@ type ASLModuleFunc = (aslImport: ASLImportFunc, module: any, exports: ASLModuleO
 class ASLModule {
     /** Module path (normalized) */
     readonly path: string;
+
+    /** Module directory */
+    readonly dir: string;
 
     /** Module id */
     readonly mid: ASLModuleId;
@@ -111,6 +121,8 @@ class ASLModule {
 
     constructor(mid: ASLModuleId, path: string) {
         this.path = path;
+        this.dir = Path.dirname(this.path);
+        
         this.mid = mid;
     }
 }
@@ -503,21 +515,53 @@ export class ASLEnvironment {
      * @param path File path to module
      * @param options Import options
      */
-    private import(promise: CancellablePromise<ASLModuleObject>, module: ASLModule, path: string, options?: any): Promise<ASLModuleObject> {
+    private import(promise: CancellablePromise<ASLModuleObject>, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
         if (promise.isCancelled) throw new ASLExecutionCancelledError();
         
-        // TODO(randomuserhi): Resolve relative paths ...
-        // TODO(randomuserhi): ESM / Require type imports
+        // Create default options
+        const parsedOptions: ASLImportOptions = {
+            type: "asl"
+        };
 
-        const mid = registry.getMid(path);
+        // Parse provided options
+        if (options !== undefined) {
+            for (const key in options) {
+                const k = key as keyof ASLImportOptions;
+                parsedOptions[k] = options[k];
+            }
+        }
 
-        if (mid === module.mid) throw new ASLImportError("Cannot import self.");
+        // Resolve paths
+        path = path.startsWith(".") ? Path.join(module.dir, path) : path;
+        
+        switch (parsedOptions.type) {
+        case "cjs": {
+            // Node import
 
-        // Update modules archetype as approapriate
-        const arch = this.moduleArchetype.get(module.mid)!;
-        this.moduleArchetype.set(module.mid, this.traverse(arch, mid));
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            return new Promise((resolve) => resolve(require(path)));
+        }
+        case "esm": {
+            // ESM import
 
-        return this.fetch(mid, module.mid).promise;
+            return import(path);
+        }
+        case "asl": {
+            // ASL import
+
+            const mid = registry.getMid(path);
+
+            if (mid === module.mid) throw new ASLImportError("Cannot import self.");
+
+            // Update modules archetype as approapriate
+            const arch = this.moduleArchetype.get(module.mid)!;
+            this.moduleArchetype.set(module.mid, this.traverse(arch, mid));
+
+            return this.fetch(mid, module.mid).promise;
+        }
+        }
+
+        throw new ASLImportError(`Invalid import type '${options?.type}'.`);
     }
 
     /**
