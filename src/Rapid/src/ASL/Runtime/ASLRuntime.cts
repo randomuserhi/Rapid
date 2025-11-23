@@ -1,5 +1,5 @@
 /**
- * Async Script Loader
+ * Async Script Loader (Node version)
  * 
  * @randomuserhi 2025
  */
@@ -122,7 +122,7 @@ class ASLModule {
     constructor(mid: ASLModuleId, path: string) {
         this.path = path;
         this.dir = Path.dirname(this.path);
-        
+
         this.mid = mid;
     }
 }
@@ -518,6 +518,8 @@ export class ASLEnvironment {
     private import(promise: CancellablePromise<ASLModuleObject>, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
         if (promise.isCancelled) throw new ASLExecutionCancelledError();
         
+        // TODO(randomuserhi): Add a import type for importing Rapid packages, maybe `type: "Rapid"`
+
         // Create default options
         const parsedOptions: ASLImportOptions = {
             type: "asl"
