@@ -5,7 +5,6 @@
         "module": "es2022",
         "rootDir": ".",
         "outDir": "./build",
-        "baseUrl": "./",
         "paths": {
             // path fixes...
         }
