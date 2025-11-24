@@ -1,9 +1,13 @@
-// Temporary test code for ASL
+import Typescript from "typescript";
+import ASLTranspiler from "./ASL/ASLTranspiler.cjs";
 
-import { ASLEnvironment, registry } from "./ASL/Runtime/ASLRuntime.cjs";
+const tsConfig: Typescript.CompilerOptions = {
+    module: Typescript.ModuleKind.ES2022,
+    moduleResolution: Typescript.ModuleResolutionKind.NodeNext,
+    rootDir: "./",
+    outDir: "E:\\",
+    lib: ["ES2022"],
+    types: ["node"],
+};
 
-const env = new ASLEnvironment();
-
-const test = "E:\\test.js";
-
-env.fetch(test).then(() => console.log((registry as any).paths));
+ASLTranspiler.transpileProgram(["E:\\test.ts"], tsConfig);

@@ -1,0 +1,1 @@
+This folder will be removed. Here for testing App architecture.

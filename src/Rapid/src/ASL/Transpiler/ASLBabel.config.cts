@@ -1,6 +1,5 @@
-// TODO(randomuserhi): Refine and test this...
-
 import type { TransformOptions } from "@babel/core";
+import ASLBabelPlugin from "./ASLBabelPlugin.cjs";
 
 const config: TransformOptions = {
     "presets": [
@@ -26,7 +25,7 @@ const config: TransformOptions = {
         ]
     ],
     "plugins": [
-        "./asl-babel-plugin"
+        ASLBabelPlugin
     ],
 };
 
