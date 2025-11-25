@@ -604,7 +604,12 @@ export class ASLEnvironment {
         case ".cjs": {
             // Node import
 
-            throw new ASLImportError(`Web based ASL does not support 'cjs' style imports.`);
+            throw new ASLImportError(`Web based ASL does not support '.node' (native addons) style imports.`);
+        }
+        case ".cjs": {
+            // Node import
+
+            throw new ASLImportError(`Web based ASL does not support '.cjs' style imports.`);
         }
         case ".esm": {
             // ESM import

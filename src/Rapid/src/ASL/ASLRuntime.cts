@@ -602,11 +602,17 @@ export class ASLEnvironment {
 
         // Resolve paths
         path = path.startsWith(".") ? Path.join(module.dir, path) : path;
-        
+
         // Resolve type of import
         const importType = extname(path);
 
         switch (importType) {
+        case ".node": {
+            // Node import
+
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            return new Promise((resolve) => resolve(require(path)));
+        }
         case ".cjs": {
             // Node import
 

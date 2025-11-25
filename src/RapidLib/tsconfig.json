@@ -5,7 +5,7 @@
         "module": "es2022",
         "rootDir": "./src",
         "outDir": "./build",
-        "tsBuildInfoFile": "./.tsbuildinfo",
+        "tsBuildInfoFile": "./build/.tsbuildinfo",
         "paths": {
             "*": [
                 "./src/*"
