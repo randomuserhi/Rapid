@@ -91,13 +91,13 @@ export class PackageManager {
         const tsconfigPath = Path.join(baseDir, "tsconfig.json");
 
         const config: RapidConfig = JSON.parse(await File.readFile(rapidConfigPath, "utf-8"));
-        
+
         // Resolve dependencies
         // TODO(randomuserhi): Resolve out of multiple directories given (on conflict, ignore) -> right now just finds first directory that matches
         // TODO(randomuserhi): Skip repeats (same dependency mentioned twice), version invariant (you cannot depend on two different versions of the same package)
         // TODO(randomuserhi): Throw error and catch it when no path is found for dependency
         // TODO(randomuserhi): Parse and verify dependent package (currently we assume its constructed and built properly - which ig is fine?)
-        const dependencies: {name: string, path: string}[] = [];
+        const dependencies: { name: string, path: string }[] = [];
         if (config.dependencies !== undefined) {
             for (const dependency in config.dependencies) {
                 const version = config.dependencies[dependency];
@@ -215,8 +215,12 @@ export class PackageManager {
 
             // Add dependency paths
             for (const dependency of dependencies) {
-                tsconfigBack.compilerOptions!.paths![`${dependency.name}/*`] = [Path.relative(tsconfigBackDir, Path.join(dependency.path, "@types", _name, "*"))];
+                tsconfigBack.compilerOptions!.paths![`${dependency.name}/*`] = [
+                    Path.relative(tsconfigBackDir, Path.join(dependency.path, "@types", _name, "*")),
+                    Path.relative(tsconfigBackDir, Path.join(dependency.path, "@types", "flex", "*"))
+                ];
                 tsconfigBack.references!.push({ path: Path.relative(tsconfigBackDir, Path.join(dependency.path, _name, "tsconfig.json")) });
+                tsconfigBack.references!.push({ path: Path.relative(tsconfigBackDir, Path.join(dependency.path, "flex", "tsconfig.json")) });
             }
 
             await File.writeFile(tsconfigBackPath, JSON.stringify(tsconfigBack, null, 2));
@@ -399,8 +403,12 @@ export class PackageManager {
 
             // Add dependency paths
             for (const dependency of dependencies) {
-                tsconfigFront.compilerOptions!.paths![`${dependency.name}/*`] = [Path.relative(tsconfigFrontDir, Path.join(dependency.path, "@types", _name, "*"))];
+                tsconfigFront.compilerOptions!.paths![`${dependency.name}/*`] = [
+                    Path.relative(tsconfigFrontDir, Path.join(dependency.path, "@types", _name, "*")),
+                    Path.relative(tsconfigFrontDir, Path.join(dependency.path, "@types", "flex", "*"))
+                ];
                 tsconfigFront.references!.push({ path: Path.relative(tsconfigFrontDir, Path.join(dependency.path, _name, "tsconfig.json")) });
+                tsconfigFront.references!.push({ path: Path.relative(tsconfigFrontDir, Path.join(dependency.path, "flex", "tsconfig.json")) });
             }
 
             await File.writeFile(tsconfigFrontPath, JSON.stringify(tsconfigFront, null, 2));
@@ -462,7 +470,7 @@ export class PackageManager {
 
                 const jobs: Promise<void>[] = [];
                 const references: Typescript.ProjectReference[] = [];
-                
+
                 // Iterate all directories with a depth of 2
                 // Structure goes Package/Version
                 for (const packageEntry of await File.readdir(dir, { withFileTypes: true })) {
@@ -535,56 +543,56 @@ export class PackageManager {
                 const basename = Path.basename(path);
 
                 switch (basename) {
-                case RAPID_CONFIG_NAME: {
-                    // If the file was a config file, generate package content etc...
-                    const baseDir = Path.dirname(path);
-                    const packageTsConfigPath = Path.join(baseDir, "tsconfig.json");
+                    case RAPID_CONFIG_NAME: {
+                        // If the file was a config file, generate package content etc...
+                        const baseDir = Path.dirname(path);
+                        const packageTsConfigPath = Path.join(baseDir, "tsconfig.json");
 
-                    // Remove package from typescript pipeline temporarily
-                    {
-                        const tsconfigPath = Path.join(rapidDir, "tsconfig.json");
-                        const config: TsConfig = JSON.parse(await File.readFile(tsconfigPath, "utf-8"));
+                        // Remove package from typescript pipeline temporarily
+                        {
+                            const tsconfigPath = Path.join(rapidDir, "tsconfig.json");
+                            const config: TsConfig = JSON.parse(await File.readFile(tsconfigPath, "utf-8"));
 
-                        if (config.references === undefined) {
-                            config.references = [];
-                        }
+                            if (config.references === undefined) {
+                                config.references = [];
+                            }
 
-                        const refIndex = config.references.findIndex(ref => Path.resolve(rapidDir, ref.path) === packageTsConfigPath);
-                        if (refIndex > -1) {
-                            config.references.splice(refIndex, 1);
-                        }
-
-                        await File.writeFile(tsconfigPath, JSON.stringify(config, null, 2));
-                    }
-
-                    // Re-parse the config
-                    await this.parse(path);
-
-                    // Manage build tsconfig
-                    const addEvent = event === "add" || event === "change";
-                    const unlinkEvent = event === "unlink";
-                    if (addEvent || unlinkEvent) {
-                        const tsconfigPath = Path.join(rapidDir, "tsconfig.json");
-                        const config: TsConfig = JSON.parse(await File.readFile(tsconfigPath, "utf-8"));
-
-                        if (config.references === undefined) {
-                            config.references = [];
-                        }
-
-                        if (addEvent && !config.references.some(ref => Path.resolve(rapidDir, ref.path) === packageTsConfigPath)) {
-                            config.references.push({
-                                path: Path.relative(rapidDir, packageTsConfigPath)
-                            });
-                        } else if (unlinkEvent) {
                             const refIndex = config.references.findIndex(ref => Path.resolve(rapidDir, ref.path) === packageTsConfigPath);
                             if (refIndex > -1) {
                                 config.references.splice(refIndex, 1);
                             }
+
+                            await File.writeFile(tsconfigPath, JSON.stringify(config, null, 2));
                         }
 
-                        await File.writeFile(tsconfigPath, JSON.stringify(config, null, 2));
-                    }
-                } break;
+                        // Re-parse the config
+                        await this.parse(path);
+
+                        // Manage build tsconfig
+                        const addEvent = event === "add" || event === "change";
+                        const unlinkEvent = event === "unlink";
+                        if (addEvent || unlinkEvent) {
+                            const tsconfigPath = Path.join(rapidDir, "tsconfig.json");
+                            const config: TsConfig = JSON.parse(await File.readFile(tsconfigPath, "utf-8"));
+
+                            if (config.references === undefined) {
+                                config.references = [];
+                            }
+
+                            if (addEvent && !config.references.some(ref => Path.resolve(rapidDir, ref.path) === packageTsConfigPath)) {
+                                config.references.push({
+                                    path: Path.relative(rapidDir, packageTsConfigPath)
+                                });
+                            } else if (unlinkEvent) {
+                                const refIndex = config.references.findIndex(ref => Path.resolve(rapidDir, ref.path) === packageTsConfigPath);
+                                if (refIndex > -1) {
+                                    config.references.splice(refIndex, 1);
+                                }
+                            }
+
+                            await File.writeFile(tsconfigPath, JSON.stringify(config, null, 2));
+                        }
+                    } break;
                 }
             } else if (event === "unlinkDir") {
                 // Directory containing packages was deleted, remove all paths that begin with the path prefix from our build list
@@ -618,23 +626,23 @@ export class PackageManager {
             const extname = Path.extname(fileName);
             // Only handle `.js` output files and ignore `.cjs` and `.mjs`
             switch (extname) {
-            case ".js": {
-                const babelResult = await transformAsync(data, ASLBabelConfig);
-                if (!babelResult || !babelResult.code) {
-                    // Error in transpilation, skip
-                    return;
-                }
+                case ".js": {
+                    const babelResult = await transformAsync(data, ASLBabelConfig);
+                    if (!babelResult || !babelResult.code) {
+                        // Error in transpilation, skip
+                        return;
+                    }
 
-                const dir = Path.dirname(fileName);
-                if (dir !== Path.parse(dir).root) {
-                    await File.mkdir(dir, { recursive: true });
-                }
-                await File.writeFile(fileName, babelResult.code);
-            } break;
+                    const dir = Path.dirname(fileName);
+                    if (dir !== Path.parse(dir).root) {
+                        await File.mkdir(dir, { recursive: true });
+                    }
+                    await File.writeFile(fileName, babelResult.code);
+                } break;
 
-            default: {
-                origWriteFile?.(fileName, data);
-            } break;
+                default: {
+                    origWriteFile?.(fileName, data);
+                } break;
             }
         };
 
