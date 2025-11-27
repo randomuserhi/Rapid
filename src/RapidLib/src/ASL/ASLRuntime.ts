@@ -355,6 +355,7 @@ class ASLRegistry {
                 .then(() => module.ready())
                 .catch((err) => {
                     if (err instanceof ASLExecutionCancelledError) return;
+                    if (err === ASL_SIGNAL_MODULE_UNLOAD) return;
                     
                     // TODO(randomuserhi): Better error handling
                     console.error(err);
