@@ -352,45 +352,75 @@ class ASLRegistry {
                 }
             }, ASLRegistry.moduleProxyHandler);
 
-            moduleFunc(envImport.bind(undefined, context), module, exports).then(() => module.ready());
+            moduleFunc(envImport.bind(undefined, context), module, exports)
+                .then(() => module.ready())
+                .catch((err) => {
+                    if (err instanceof ASLExecutionCancelledError) return;
+
+                    // TODO(randomuserhi): Proper error handling
+                    // console.error(err);
+                    throw err;
+                });
         });
     }
+
+    /**
+     * Only 1 invalidation process can run at a time, so stack them
+     * in a promise queue.
+     */
+    private invalidationQueue: Promise<void> = new Promise((resolve) => resolve());
+
+    /**
+     * Invalidates a module. All environments including said module will automatically reload said module.
+     * 
+     * @param path Module to mark as invalidated
+     */
+    public invalidate(path: string): Promise<void>;
 
     /**
      * Invalidates a module. All environments including said module will automatically reload said module.
      * 
      * @param mid Module to mark as invalidated
      */
-    public async invalidate(mid: ASLModuleId) {
-        // If module is pending, cancel it
-        const pending = this.pending.get(mid);
-        if (pending !== undefined) {
-            pending.cancel();
+    public invalidate(mid: ASLModuleId): Promise<void>;
 
-            // We have to immediately remove from pending dict to prevent stack overflow
-            // as the `finally()` call won't call until next async event
-            this.pending.delete(mid);
-        } else if (!this.cache.delete(mid)) {
+    public invalidate(mid: ASLModuleId | string): Promise<void> {
+        this.invalidationQueue = this.invalidationQueue.then(() => {// Resolve mid from path
+            if (typeof mid === "string") {
+                mid = registry.getMid(mid);
+            }
+
+            // If module is pending, cancel it
+            const pending = this.pending.get(mid);
+            if (pending !== undefined) {
+                pending.cancel();
+
+                // We have to immediately remove from pending dict to prevent stack overflow
+                // as the `finally()` call won't call until next async event
+                this.pending.delete(mid);
+            } else if (!this.cache.delete(mid)) {
             // Otherwise, if it is in cache, delete it. If it is not in the cache, 
             // then module was never loaded and we can early return
-            return;
-        }
+                return;
+            }
 
-        // Invalidate from all environments
-        const promises = [];
+            // Invalidate from all environments
+            const promises = [];
 
-        const dependencies = this.dependencies.get(mid);
-        if (dependencies === undefined) return;
+            const dependencies = this.dependencies.get(mid);
+            if (dependencies === undefined) return;
 
-        // Note that we must use `[...dependencies]` over `dependencies.values` or [Symbol.iterator] to create
-        // an independent list as the set changes during iteration.
-        // 
-        // This is because environment modules are loaded and unloaded during the invalidation process.
-        for (const env of [...dependencies]) {
-            promises.push(env.invalidate(mid));
-        }
+            // Note that we must use `[...dependencies]` over `dependencies.values` or [Symbol.iterator] to create
+            // an independent list as the set changes during iteration.
+            // 
+            // This is because environment modules are loaded and unloaded during the invalidation process.
+            for (const env of [...dependencies]) {
+                promises.push(env.invalidate(mid));
+            }
 
-        await Promise.all(promises);
+            return Promise.allSettled(promises) as unknown as Promise<void>;
+        });
+        return this.invalidationQueue;
     }
 }
 
@@ -479,6 +509,10 @@ class ASLImportError extends Error {
     }
 }
 
+const defaultImportHook = async (module: ASLModule, path: string) => {
+    return path.startsWith(".") ? Path.join(module.dir, path) : path;
+};
+
 /**
  * ASL Environment.
  */
@@ -511,6 +545,11 @@ export class ASLEnvironment {
      * Maps a module id to all archetypes that contain said type
      */
     private readonly typemap = new Map<ASLModuleId, ASLArchetype[]>();
+
+    /**
+     * Import hook that the user can define to transform paths before they are used
+     */
+    public importHook: (module: ASLModule, path: string) => Promise<string> = defaultImportHook;
 
     constructor() {
         // Register root archetype
@@ -556,17 +595,18 @@ export class ASLEnvironment {
         // Try and get archetype from cache
         arch = this.archetypes.get(newTypeId);
         if (arch === undefined) {
-            // Create archetype, cache it and register to typemap
+            // Create archetype, cache it
             arch = new ASLArchetype(newType, newTypeId);
             this.archetypes.set(newTypeId, arch);
-            
-            let archList = this.typemap.get(mid);
-            if (archList === undefined) {
-                archList = [];
-                this.typemap.set(mid, archList);
-            }
-            archList.push(arch);
         }
+
+        // register to typemap
+        let archList = this.typemap.get(mid);
+        if (archList === undefined) {
+            archList = [];
+            this.typemap.set(mid, archList);
+        }
+        archList.push(arch);
 
         // update to traversal cache
         from.addMap.set(mid, arch);
@@ -584,63 +624,60 @@ export class ASLEnvironment {
      * @param options Import options
      */
     private import(promise: CancellablePromise<ASLModuleObject>, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
-        if (promise.isCancelled) throw new ASLExecutionCancelledError();
-        
-        // TODO(randomuserhi): Add a hook to intercept paths for custom logic
-        //                     E.g path resolution needed to get scripts in build folders vs base/flex folder etc...
+        // Pass path through import hook
+        return this.importHook(module, path).then(path => {
+            if (promise.isCancelled) throw new ASLExecutionCancelledError();
 
-        // Create default options
-        const parsedOptions: ASLImportOptions = {
-        };
+            // Create default options
+            const parsedOptions: ASLImportOptions = {
+            };
 
-        // Parse provided options
-        if (options !== undefined) {
-            for (const key in options) {
-                const k = key as keyof ASLImportOptions;
-                parsedOptions[k] = options[k];
+            // Parse provided options
+            if (options !== undefined) {
+                for (const key in options) {
+                    const k = key as keyof ASLImportOptions;
+                    parsedOptions[k] = options[k];
+                }
             }
-        }
 
-        // Resolve paths
-        path = path.startsWith(".") ? Path.join(module.dir, path) : path;
+            // Resolve type of import
+            const importType = extname(path);
 
-        // Resolve type of import
-        const importType = extname(path);
-
-        switch (importType) {
-        case ".node": {
+            switch (importType) {
+            case ".node": {
             // Node import
 
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            return new Promise((resolve) => resolve(require(path)));
-        }
-        case ".cjs": {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                return new Promise((resolve) => resolve(require(path)));
+            }
+            case ".cjs": {
             // Node import
 
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            return new Promise((resolve) => resolve(require(path)));
-        }
-        case ".mjs": {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                return new Promise((resolve) => resolve(require(path)));
+            }
+            case ".mjs": {
             // ESM import
 
-            return import(path);
-        }
-        case ".js": {
+                return import(path);
+            }
+            case ".js": {
             // ASL import
 
-            const mid = registry.getMid(path);
+                const mid = registry.getMid(path);
 
-            if (mid === module.mid) throw new ASLImportError("Cannot import self.");
+                if (mid === module.mid) throw new ASLImportError("Cannot import self.");
 
-            // Update modules archetype as approapriate
-            const arch = this.moduleArchetype.get(module.mid)!;
-            this.moduleArchetype.set(module.mid, this.traverse(arch, mid));
+                // Update modules archetype as approapriate
+                const arch = this.moduleArchetype.get(module.mid)!;
+                this.moduleArchetype.set(module.mid, this.traverse(arch, mid));
 
-            return this.fetch(mid, module.mid).promise;
-        }
-        }
+                return this.fetch(mid, module.mid).promise;
+            }
+            }
 
-        throw new ASLImportError(`Import type is derived from file extension, please use a valid extension: ".cjs", ".mjs", ".js"`);
+            throw new ASLImportError(`Import type is derived from file extension, please use a valid extension: ".cjs", ".mjs", ".js"`);
+        });
     }
 
     /**
@@ -726,12 +763,18 @@ export class ASLEnvironment {
     }
 
     /**
+     * Only 1 invalidation process can run at a time, so stack them
+     * in a promise queue.
+     */
+    private invalidationQueue: Promise<void> = new Promise((resolve) => resolve());
+
+    /**
      * Invalidates the given module, causing it to reload. 
      * Subsequently reloads modules that depend on it.
      * 
      * @param path Module to invalidate
      */
-    public async invalidate(path: string): Promise<void>
+    public invalidate(path: string): Promise<void>
 
     /**
      * Invalidates the given module, causing it to reload. 
@@ -739,20 +782,23 @@ export class ASLEnvironment {
      * 
      * @param mid Module to invalidate
      */
-    public async invalidate(mid: ASLModuleId): Promise<void>
+    public invalidate(mid: ASLModuleId): Promise<void>
 
-    public async invalidate(mid: ASLModuleId | string): Promise<void> {
-        // Resolve mid from path
-        if (typeof mid === "string") {
-            mid = registry.getMid(mid);
-        }
+    public invalidate(mid: ASLModuleId | string): Promise<void> {
+        this.invalidationQueue = this.invalidationQueue.then(() => {
+            // Resolve mid from path
+            if (typeof mid === "string") {
+                mid = registry.getMid(mid);
+            }
 
-        const promises = [];
-        for (const module of this.unload(mid)) {
-            promises.push(this.fetch(module));
-        }
+            const promises = [];
+            for (const module of this.unload(mid)) {
+                promises.push(this.fetch(module));
+            }
 
-        await Promise.all(promises);
+            return Promise.allSettled(promises) as unknown as Promise<void>;
+        });
+        return this.invalidationQueue;
     }
 
     /**

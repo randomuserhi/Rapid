@@ -175,6 +175,8 @@ class PackageBuilder {
     private readonly host: Ts.SolutionBuilderWithWatchHost<Ts.SemanticDiagnosticsBuilderProgram> = undefined!;
     private readonly fileWatchers = new Set<Ts.FileWatcher>();
 
+    public onASLTranspiled: ((path: string) => void) | undefined;
+
     private builder: Ts.SolutionBuilder<Ts.SemanticDiagnosticsBuilderProgram> | undefined = undefined;
 
     constructor() {
@@ -221,6 +223,7 @@ class PackageBuilder {
                 await File.writeFile(fileName, babelResult.code);
 
                 // TODO(randomuserhi): Trigger hot reload hook for newly compiled file
+                this.onASLTranspiled?.(fileName);
             } break;
 
             default: {
@@ -257,7 +260,7 @@ export class PackageManager {
 
     private readonly typeDir: string;
 
-    private readonly builder: PackageBuilder = new PackageBuilder();
+    public readonly builder: PackageBuilder = new PackageBuilder();
 
     private configWatcher: FSWatcher | undefined = undefined;
     private lastChangeTrigger = Date.now();
@@ -272,6 +275,36 @@ export class PackageManager {
     constructor(registry: PackageRegistry, typeDir: string) {
         this.registry = registry;
         this.typeDir = typeDir;
+
+        const cleanup = () => {
+            this.stopAutomaticBuilds();
+        };
+
+        process.on('SIGINT', () => {
+            cleanup();
+            process.exit(0); // Exit gracefully
+        });
+
+        process.on('SIGTERM', () => {
+            cleanup();
+            process.exit(0);
+        });
+
+        // Catch normal process exit
+        process.on('exit', () => {
+            cleanup();
+        });
+
+        // Catch unexpected errors (prevent crash without cleanup)
+        process.on('uncaughtException', () => {
+            cleanup();
+            process.exit(1);
+        });
+
+        process.on('unhandledRejection', () => {
+            cleanup();
+            process.exit(1);
+        });
     }
 
     private stopAutomaticBuilds() {
@@ -449,7 +482,7 @@ export class PackageManager {
             // Add dependency paths
             const references: Ts.ProjectReference[] = [];
             for (const dependency of dependencies) {
-                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/*`] = [
+                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/${dependency.version}/*`] = [
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*"))
                 ];
                 references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, repo, "tsconfig.json")) });
@@ -537,7 +570,7 @@ export class PackageManager {
             // Add dependency paths
             const references: Ts.ProjectReference[] = [];
             for (const dependency of dependencies) {
-                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/*`] = [
+                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/${dependency.version}/*`] = [
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*")),
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", "flex", "*"))
                 ];
@@ -657,7 +690,7 @@ export class PackageManager {
             // Add dependency paths
             const references: Ts.ProjectReference[] = [];
             for (const dependency of dependencies) {
-                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/*`] = [
+                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/${dependency.version}/*`] = [
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*")),
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", "flex", "*"))
                 ];
