@@ -15,8 +15,21 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
 
     // Example runtime builder
     const pckgManager = new PackageManager(registry, "E:\\Git\\RapidRegistry\\@types");
+
+    // Collects built files and groups them into a single registry invalidation  
+    let collector: string[] = [];
+    let lastCollect = Date.now();
     pckgManager.builder.onASLTranspiled = (path) => {
-        ASLRegistry.invalidate(path);
+        collector.push(path);
+        lastCollect = Date.now();
+
+        setTimeout(() => {
+            const now = Date.now();
+            if (now - lastCollect > 50) {
+                ASLRegistry.invalidate(collector);
+                collector = [];
+            }
+        }, 100);
     };
 
     pckgManager.watch("App", "1.0.0");

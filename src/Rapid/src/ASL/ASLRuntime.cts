@@ -377,47 +377,60 @@ class ASLRegistry {
      * 
      * @param path Module to mark as invalidated
      */
-    public invalidate(path: string): Promise<void>;
+    public invalidate(paths: string[]): Promise<void>;
 
     /**
      * Invalidates a module. All environments including said module will automatically reload said module.
      * 
      * @param mid Module to mark as invalidated
      */
-    public invalidate(mid: ASLModuleId): Promise<void>;
+    public invalidate(mids: ASLModuleId[]): Promise<void>;
 
-    public invalidate(mid: ASLModuleId | string): Promise<void> {
+    public invalidate(list: (ASLModuleId | string)[]): Promise<void> {
         this.invalidationQueue = this.invalidationQueue.then(() => {// Resolve mid from path
-            if (typeof mid === "string") {
-                mid = registry.getMid(mid);
-            }
+            // Resolve mids
+            const mids = list.map(mid => {
+                if (typeof mid === "string") {
+                    mid = registry.getMid(mid);
+                }
+                return mid;
+            });
 
-            // If module is pending, cancel it
-            const pending = this.pending.get(mid);
-            if (pending !== undefined) {
-                pending.cancel();
+            const midsMap = new Map<ASLEnvironment, ASLModuleId[]>();
 
-                // We have to immediately remove from pending dict to prevent stack overflow
-                // as the `finally()` call won't call until next async event
-                this.pending.delete(mid);
-            } else if (!this.cache.delete(mid)) {
-            // Otherwise, if it is in cache, delete it. If it is not in the cache, 
-            // then module was never loaded and we can early return
-                return;
+            for (const mid of mids) {
+                // If module is pending, cancel it
+                const pending = this.pending.get(mid);
+                if (pending !== undefined) {
+                    pending.cancel();
+
+                    // We have to immediately remove from pending dict to prevent stack overflow
+                    // as the `finally()` call won't call until next async event
+                    this.pending.delete(mid);
+                } else if (!this.cache.delete(mid)) {
+                    // Otherwise, if it is in cache, delete it. If it is not in the cache, 
+                    // then module was never loaded and we can early return
+                    continue;
+                }
+
+                const dependencies = this.dependencies.get(mid);
+                if (dependencies === undefined) continue;
+
+                for (const env of dependencies) {
+                    let envList = midsMap.get(env);
+                    if (envList === undefined) {
+                        envList = [];
+                        midsMap.set(env, envList);
+                    }
+                    envList.push(mid);
+                }
             }
 
             // Invalidate from all environments
             const promises = [];
 
-            const dependencies = this.dependencies.get(mid);
-            if (dependencies === undefined) return;
-
-            // Note that we must use `[...dependencies]` over `dependencies.values` or [Symbol.iterator] to create
-            // an independent list as the set changes during iteration.
-            // 
-            // This is because environment modules are loaded and unloaded during the invalidation process.
-            for (const env of [...dependencies]) {
-                promises.push(env.invalidate(mid));
+            for (const [env, envList] of midsMap.entries()) {
+                promises.push(env.invalidate(envList));
             }
 
             return Promise.allSettled(promises) as unknown as Promise<void>;
@@ -743,7 +756,7 @@ export class ASLEnvironment {
      * @param path Module to invalidate
      * @returns Set of modules that were unloaded
      */
-    public unload(path: string): Set<ASLModuleId>
+    public unload(paths: string[]): Set<ASLModuleId>
    
     /**
      * Unloads the given module and all modules that depend on it
@@ -751,16 +764,21 @@ export class ASLEnvironment {
      * @param mid Module to invalidate
      * @returns Set of modules that were unloaded
      */
-    public unload(mid: ASLModuleId): Set<ASLModuleId>
+    public unload(mids: ASLModuleId[]): Set<ASLModuleId>
     
-    public unload(mid: string | ASLModuleId): Set<ASLModuleId> {
-        // Resolve mid from path
-        if (typeof mid === "string") {
-            mid = registry.getMid(mid);
-        }
+    public unload(list: (string | ASLModuleId)[]): Set<ASLModuleId> {
+        // Resolve mids
+        const mids = list.map(mid => {
+            if (typeof mid === "string") {
+                mid = registry.getMid(mid);
+            }
+            return mid;
+        });
 
         const unloadedModules = new Set<ASLModuleId>();
-        this._unload(mid, unloadedModules);
+        for (const mid of mids) {
+            this._unload(mid, unloadedModules);
+        }
         return unloadedModules;
     }
 
@@ -776,7 +794,7 @@ export class ASLEnvironment {
      * 
      * @param path Module to invalidate
      */
-    public invalidate(path: string): Promise<void>
+    public invalidate(paths: string[]): Promise<void>
 
     /**
      * Invalidates the given module, causing it to reload. 
@@ -784,17 +802,20 @@ export class ASLEnvironment {
      * 
      * @param mid Module to invalidate
      */
-    public invalidate(mid: ASLModuleId): Promise<void>
+    public invalidate(mids: ASLModuleId[]): Promise<void>
 
-    public invalidate(mid: ASLModuleId | string): Promise<void> {
+    public invalidate(list: (ASLModuleId | string)[]): Promise<void> {
         this.invalidationQueue = this.invalidationQueue.then(() => {
-            // Resolve mid from path
-            if (typeof mid === "string") {
-                mid = registry.getMid(mid);
-            }
+            // Resolve mids
+            const mids = list.map(mid => {
+                if (typeof mid === "string") {
+                    mid = registry.getMid(mid);
+                }
+                return mid;
+            });
 
             const promises = [];
-            for (const module of this.unload(mid)) {
+            for (const module of this.unload(mids)) {
                 promises.push(this.fetch(module));
             }
 
