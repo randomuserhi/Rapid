@@ -1,6 +1,5 @@
 
-// import { PackageManager } from "./PackageManager.cjs";
-import { PackageManager, PackageRegistry } from "./PackageManager2.cjs";
+import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
 
 (async () => {
 
@@ -17,6 +16,3 @@ import { PackageManager, PackageRegistry } from "./PackageManager2.cjs";
     pckgManager.watch("Library", "1.0.0");
 
 })();
-
-// const pb = new PackageManager(["C:\\Users\\User\\Documents\\Git\\RapidRegistry\\Apps"], "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\@types");
-// const pb = new PackageManager(["E:\\Git\\RapidRegistry\\Apps"], "E:\\Git\\RapidRegistry\\@types");
