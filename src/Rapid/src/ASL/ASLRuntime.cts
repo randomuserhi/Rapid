@@ -334,7 +334,7 @@ class ASLRegistry {
      * @param moduleFunc The ASLModuleFunc of the module being executed.
      */
     private execModule(context: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             let mutable = true;
 
             const exports = new Proxy<Record<PropertyKey, any>>({}, {
