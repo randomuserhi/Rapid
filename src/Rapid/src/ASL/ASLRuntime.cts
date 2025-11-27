@@ -586,7 +586,8 @@ export class ASLEnvironment {
     private import(promise: CancellablePromise<ASLModuleObject>, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
         if (promise.isCancelled) throw new ASLExecutionCancelledError();
         
-        // TODO(randomuserhi): Add a import type for importing Rapid packages, maybe `type: "Rapid"`
+        // TODO(randomuserhi): Add a hook to intercept paths for custom logic
+        //                     E.g path resolution needed to get scripts in build folders vs base/flex folder etc...
 
         // Create default options
         const parsedOptions: ASLImportOptions = {
