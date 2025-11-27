@@ -367,6 +367,9 @@ class ASLRegistry {
                     
                     // TODO(randomuserhi): Better error handling
                     console.error(err);
+
+                    // Prematurely mark module as ready
+                    module.ready();
                 });
         });
     }
