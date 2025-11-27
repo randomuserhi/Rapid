@@ -5,12 +5,7 @@ import { ASLEnvironment, registry as ASLRegistry } from "./ASL/ASLRuntime.cjs";
 import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
 
 (async () => {
-
-    //const registry = new PackageRegistry(["C:\\Users\\User\\Documents\\Git\\RapidRegistry\\Apps"]);
-    //const pckgManager = new PackageManager(registry, "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\@types");
-
     const registry = new PackageRegistry(["E:\\RapidRegistry"]);
-
     const environment = new ASLEnvironment();
 
     // Example runtime builder
@@ -32,10 +27,11 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
         }, 100);
     };
 
+    // Watch app & library as an example (should be moved elsewhere later)
     pckgManager.watch("App", "1.0.0");
     pckgManager.watch("Library", "1.0.0");
 
-    // Example environment setup + Builder
+    // Example environment setup
     {
         const pckg = await registry.get("App", "1.0.0");
         if (pckg === undefined) return;
