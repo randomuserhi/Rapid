@@ -1,6 +1,9 @@
+import { transformAsync } from "@babel/core";
+import Chokidar, { FSWatcher } from "chokidar";
 import File from "fs/promises";
 import Path from "path";
 import Ts from "typescript";
+import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
 
 /** Helper method to get file information. Returns undefined if file does not exist. */
 async function fileStat(path: string) {
@@ -77,6 +80,36 @@ export class PackageRegistry {
 
         return undefined;
     }
+
+    public async fromPath(path: string): Promise<PackageInfo | undefined> {
+        path = Path.resolve(path);
+
+        const basename = Path.basename(path);
+        if (basename !== RAPID_CONFIG_NAME) return undefined;
+
+        const dirIndex = this.directories.findIndex(dir => path.startsWith(Path.resolve(dir)));
+        if (dirIndex < 0) return undefined;
+        
+        const dir = this.directories[dirIndex];
+        const parts = path.replace(dir, "").split(Path.sep);
+        const pckg = parts[1];
+        const version = parts[2];
+        
+        const baseDir = Path.resolve(Path.join(dir, pckg, version));
+        const configPath = Path.join(baseDir, RAPID_CONFIG_NAME);
+        const configStat = await fileStat(configPath);
+
+        if (configStat !== undefined && configStat.isFile()) {
+            return {
+                pckg,
+                version,
+                baseDir,
+                configPath
+            };
+        }
+
+        return undefined;
+    }
 }
 
 /**
@@ -120,6 +153,99 @@ interface TsConfig {
     include?: string[];
 }
 
+const formatHost: Ts.FormatDiagnosticsHost = {
+    getCanonicalFileName: path => path,
+    getCurrentDirectory: Ts.sys.getCurrentDirectory,
+    getNewLine: () => Ts.sys.newLine
+};
+
+function reportDiagnostic(diagnostic: Ts.Diagnostic) {
+    //console.error("Error", diagnostic.code, ":", Ts.flattenDiagnosticMessageText(diagnostic.messageText, formatHost.getNewLine()));
+}
+
+function reportSolutionStatusChanged(diagnostic: Ts.Diagnostic) {
+    //console.info(Ts.formatDiagnostic(diagnostic, formatHost));
+}
+
+function reportWatchStatusChanged(diagnostic: Ts.Diagnostic) {
+    //console.info(Ts.formatDiagnostic(diagnostic, formatHost));
+}
+
+class PackageBuilder {
+    private readonly host: Ts.SolutionBuilderWithWatchHost<Ts.SemanticDiagnosticsBuilderProgram> = undefined!;
+    private readonly fileWatchers = new Set<Ts.FileWatcher>();
+
+    private builder: Ts.SolutionBuilder<Ts.SemanticDiagnosticsBuilderProgram> | undefined = undefined;
+
+    constructor() {
+        const self = this;
+        const sys: Ts.System = {
+            ...Ts.sys,
+            watchFile(path, callback, pollingInterval) {
+                const watcher = Ts.sys.watchFile!(path, callback, pollingInterval);
+                self.fileWatchers.add(watcher);
+                return watcher;
+            },
+            watchDirectory(path, callback, recursive) {
+                const watcher = Ts.sys.watchDirectory!(path, callback, recursive);
+                self.fileWatchers.add(watcher);
+                return watcher;
+            }
+        };
+
+        this.host = Ts.createSolutionBuilderWithWatchHost(
+            sys,
+            Ts.createSemanticDiagnosticsBuilderProgram,
+            reportDiagnostic,
+            reportSolutionStatusChanged,
+            reportWatchStatusChanged
+        );
+
+        // Overwrite behaviour for babel transpilation of asl files
+        const origWriteFile = this.host.writeFile;
+        this.host.writeFile = async (fileName, data) => {
+            const extname = Path.extname(fileName);
+            // Only handle `.js` output files and ignore `.cjs` and `.mjs`
+            switch (extname) {
+            case ".js": {
+                const babelResult = await transformAsync(data, ASLBabelConfig);
+                if (!babelResult || !babelResult.code) {
+                    // Error in transpilation, skip
+                    return;
+                }
+
+                const dir = Path.dirname(fileName);
+                if (dir !== Path.parse(dir).root) {
+                    await File.mkdir(dir, { recursive: true });
+                }
+                await File.writeFile(fileName, babelResult.code);
+            } break;
+
+            default: {
+                origWriteFile?.(fileName, data);
+            } break;
+            }
+        };
+    }
+
+    public start(rootNames: readonly string[]) {
+        if (rootNames.length === 0) return;
+
+        // Start the typescript compiler
+        this.builder = Ts.createSolutionBuilderWithWatch(this.host, rootNames, {});
+        this.builder.build();
+    }
+
+    public stop() {
+        // Stop all file watchers
+        for (const watcher of this.fileWatchers) watcher.close();
+        this.fileWatchers.clear();
+
+        // unassign builder
+        this.builder = undefined;
+    }
+}
+
 /**
  * Manages packages within a registry.
  */
@@ -128,6 +254,13 @@ export class PackageManager {
     private readonly registry: PackageRegistry;
 
     private readonly typeDir: string;
+
+    private readonly builder: PackageBuilder = new PackageBuilder();
+
+    private configWatcher: FSWatcher | undefined = undefined;
+    private lastChangeTrigger = Date.now();
+
+    private watchList: string[] = [];
 
     /**
      * 
@@ -139,10 +272,34 @@ export class PackageManager {
         this.typeDir = typeDir;
     }
 
-    /** Makes the package, initializing the required tsconfigs */
-    public async make(pckg: string, version: string) {
-        const pckgInfo = await this.registry.get(pckg, version);
-        if (pckgInfo === undefined) throw new PackageErrorNotFound(pckg, version);
+    private stopAutomaticBuilds() {
+        this.builder.stop();
+        this.configWatcher?.close();
+        this.configWatcher = undefined;
+    }
+    
+    private startAutomaticBuilds() {
+        if (this.watchList.length === 0) return;
+        this.builder.start(this.watchList);
+
+        this.configWatcher = Chokidar.watch(this.watchList.map(p => Path.join(p, RAPID_CONFIG_NAME)), {
+            ignoreInitial: true
+        });
+        this.configWatcher.on("change", (path) => {
+            const now = Date.now();
+            if (now - this.lastChangeTrigger < 100) return;
+            this.lastChangeTrigger = now;
+
+            this.registry.fromPath(path).then(pckgInfo => {
+                if (pckgInfo === undefined) return;
+                this._make(pckgInfo);
+            });
+        });
+    }
+
+    private async _make(pckgInfo: PackageInfo) {
+        // Stop the builder
+        this.stopAutomaticBuilds();
 
         /**
          * Packages are made up of 3 repositories (repos):
@@ -552,20 +709,51 @@ export class PackageManager {
                 await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));               
             }
         }
+
+        // Restart the builder
+        this.startAutomaticBuilds();
+    }
+
+    /** Makes the package, initializing the required tsconfigs */
+    public async make(pckg: string, version: string) {
+        const pckgInfo = await this.registry.get(pckg, version);
+        if (pckgInfo === undefined) throw new PackageErrorNotFound(pckg, version);
+        
+        await this._make(pckgInfo);
     }
 
     /** Adds a package to watch list - automatically makes the package and builds it on changes. */
     public async watch(pckg: string, version: string) {
+        const pckgInfo = await this.registry.get(pckg, version);
+        if (pckgInfo === undefined) throw new PackageErrorNotFound(pckg, version);
 
+        const index = this.watchList.findIndex((rootName) => rootName === pckgInfo.baseDir);
+        if (index < 0) {
+            this.stopAutomaticBuilds();
+
+            this.watchList.push(pckgInfo.baseDir);
+
+            this.startAutomaticBuilds();
+        }
     }
 
     /** Removes a package from the watch list */
     public async unwatch(pckg: string, version: string) {
+        const pckgInfo = await this.registry.get(pckg, version);
+        if (pckgInfo === undefined) throw new PackageErrorNotFound(pckg, version);
 
+        const index = this.watchList.findIndex((rootName) => rootName === pckgInfo.baseDir);
+        if (index >= 0) {
+            this.stopAutomaticBuilds();
+
+            this.watchList.splice(index, 1);
+
+            this.startAutomaticBuilds();
+        }
     }
 
     /** Builds the given package */
     public async build(pckg: string, version: string) {
-
+        // TODO(randomuserhi): ...
     }
 }

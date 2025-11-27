@@ -13,6 +13,9 @@ import { PackageManager, PackageRegistry } from "./PackageManager2.cjs";
     pckgManager.make("Library", "1.0.0");
     pckgManager.make("App", "1.0.0");
 
+    pckgManager.watch("App", "1.0.0");
+    pckgManager.watch("Library", "1.0.0");
+
 })();
 
 // const pb = new PackageManager(["C:\\Users\\User\\Documents\\Git\\RapidRegistry\\Apps"], "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\@types");
