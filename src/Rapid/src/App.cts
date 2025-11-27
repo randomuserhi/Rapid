@@ -11,6 +11,8 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
 
     const registry = new PackageRegistry(["E:\\RapidRegistry"]);
 
+    const environment = new ASLEnvironment();
+
     // Example runtime builder
     const pckgManager = new PackageManager(registry, "E:\\Git\\RapidRegistry\\@types");
     pckgManager.builder.onASLTranspiled = (path) => {
@@ -34,7 +36,6 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
 
         const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
 
-        const environment = new ASLEnvironment();
         environment.importHook = async (module, path) => {
             path = Path.normalize(path);
 

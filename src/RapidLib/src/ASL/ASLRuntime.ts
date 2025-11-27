@@ -84,7 +84,7 @@ function extname(path: string) {
  */
 class CancellablePromise<T> {
     readonly promise: Promise<T>;
-    readonly cancel: (reason?: any) => void;
+    public cancel: (reason?: any) => void;
     readonly isCancelled: boolean = false; 
     readonly cancelReason?: any;
 
@@ -185,7 +185,7 @@ class ASLModule {
     /**
      * Executes the given module, returning the module object containing its exports.
      */
-    readonly exec: (aslImport: any) => Promise<ASLModuleObject> = undefined!;
+    readonly exec: (executionPromise: CancellablePromise<ASLModuleObject>, aslImport: any) => Promise<ASLModuleObject> = undefined!;
 
     constructor(mid: ASLModuleId, path: string) {
         this.path = path;
@@ -332,8 +332,17 @@ class ASLRegistry {
      * 
      * @param moduleFunc The ASLModuleFunc of the module being executed.
      */
-    private execModule(context: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
-        return new Promise((resolve) => {
+    private execModule(context: ASLModule, moduleFunc: ASLModuleFunc, executionPromise: CancellablePromise<ASLModuleObject>, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
+        return new Promise((resolve, reject) => {
+            // Hook cancel to reject execution when execution promise is cancelled.
+            // Needed otherwise we cannot free this promise as it never gets resolved on errors,
+            // thus on hot reload, when the main execution is cancelled, this can be resolved.
+            const oldCancel = executionPromise.cancel;
+            executionPromise.cancel = () => {
+                reject();
+                oldCancel();
+            };
+
             let mutable = true;
 
             const exports = new Proxy<Record<PropertyKey, any>>({}, {
@@ -355,10 +364,9 @@ class ASLRegistry {
                 .then(() => module.ready())
                 .catch((err) => {
                     if (err instanceof ASLExecutionCancelledError) return;
-
-                    // TODO(randomuserhi): Proper error handling
-                    // console.error(err);
-                    throw err;
+                    
+                    // TODO(randomuserhi): Better error handling
+                    console.error(err);
                 });
         });
     }
@@ -832,7 +840,7 @@ export class ASLEnvironment {
                             this.moduleArchetype.set(mid, this.traverse(this.rootArchetype, mid));
 
                             // Execute module
-                            return info.exec(this.import.bind(this, self));
+                            return info.exec(self, this.import.bind(this, self));
                         })
                         .then((obj) => {
                             // Store module object into cache
