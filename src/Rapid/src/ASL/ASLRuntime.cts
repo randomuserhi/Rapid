@@ -4,6 +4,13 @@
  * @randomuserhi 2025
  */
 
+// TODO(randomuserhi): Promise and execution probably needs to be refactored.
+//                     Currently way to bug-prone when multiple async invalidation calls are made.
+//                     Hot reloading should be far more stable - and execution cancellation (on module reloads) needs to be re-thought through
+//                     Node JS tends to exit execution on uncaught promise exceptions -> our design doesn't really take this properly into account.
+//
+//                     Most likely, completely re-write the runtime with a new execution / cancellation architecture
+
 import File from "fs/promises";
 import Path from "path";
 
@@ -239,6 +246,16 @@ class ASLRegistry {
         return mid;
     }
 
+    /**
+     * Get the module path for a given module id.
+     * 
+     * @param mid Module id
+     * @returns path (or undefined if module id does not exist)
+     */
+    public getPath(mid: ASLModuleId) {
+        return this.paths.get(mid);
+    }
+
     /** Module cache. Maps module file path to the cached module info. */
     private readonly cache = new Map<ASLModuleId, ASLModule>();
 
@@ -312,7 +329,17 @@ class ASLRegistry {
             this.pending.set(mid, promise);
 
             // When request finishes, remove from pending
-            promise.catch(noop).finally(() => this.pending.delete(mid));
+            promise.catch(noop).finally(() => {
+                // On unload signal, skip handling as it is already handled automatically by ASL synchronously
+                // by the `unload` method.
+                // 
+                // This is because we cannot trust order of execution by JS engine's micro-tasks.
+                // Pending needs to be deleted on cancel, before we re-request execution of the modules,
+                // but this is not guaranteed if we rely on JS micro-task scheduling.
+                if (promise!.cancelReason === ASL_SIGNAL_MODULE_UNLOAD) return;
+                
+                this.pending.delete(mid);
+            });
         }
 
         return promise;
@@ -360,83 +387,69 @@ class ASLRegistry {
                     
                     // TODO(randomuserhi): Better error handling
                     console.error(err);
-
-                    // Prematurely mark module as ready
-                    module.ready();
                 });
         });
     }
-
-    /**
-     * Only 1 invalidation process can run at a time, so stack them
-     * in a promise queue.
-     */
-    private invalidationQueue: Promise<void> = new Promise((resolve) => resolve());
 
     /**
      * Invalidates a module. All environments including said module will automatically reload said module.
      * 
      * @param path Module to mark as invalidated
      */
-    public invalidate(paths: string[]): Promise<void>;
+    public invalidate(paths: string[]): void;
 
     /**
      * Invalidates a module. All environments including said module will automatically reload said module.
      * 
      * @param mid Module to mark as invalidated
      */
-    public invalidate(mids: ASLModuleId[]): Promise<void>;
+    public invalidate(mids: ASLModuleId[]): void;
 
-    public invalidate(list: (ASLModuleId | string)[]): Promise<void> {
-        this.invalidationQueue = this.invalidationQueue.then(() => {// Resolve mid from path
-            // Resolve mids
-            const mids = list.map(mid => {
-                if (typeof mid === "string") {
-                    mid = registry.getMid(mid);
-                }
-                return mid;
-            });
+    public invalidate(list: (ASLModuleId | string)[]): void {
+        if (list.length === 0) return;
 
-            const midsMap = new Map<ASLEnvironment, ASLModuleId[]>();
-
-            for (const mid of mids) {
-                // If module is pending, cancel it
-                const pending = this.pending.get(mid);
-                if (pending !== undefined) {
-                    pending.cancel();
-
-                    // We have to immediately remove from pending dict to prevent stack overflow
-                    // as the `finally()` call won't call until next async event
-                    this.pending.delete(mid);
-                } else if (!this.cache.delete(mid)) {
-                    // Otherwise, if it is in cache, delete it. If it is not in the cache, 
-                    // then module was never loaded and we can early return
-                    continue;
-                }
-
-                const dependencies = this.dependencies.get(mid);
-                if (dependencies === undefined) continue;
-
-                for (const env of dependencies) {
-                    let envList = midsMap.get(env);
-                    if (envList === undefined) {
-                        envList = [];
-                        midsMap.set(env, envList);
-                    }
-                    envList.push(mid);
-                }
+        // Resolve mids
+        const mids = list.map(mid => {
+            if (typeof mid === "string") {
+                mid = registry.getMid(mid);
             }
-
-            // Invalidate from all environments
-            const promises = [];
-
-            for (const [env, envList] of midsMap.entries()) {
-                promises.push(env.invalidate(envList));
-            }
-
-            return Promise.allSettled(promises) as unknown as Promise<void>;
+            return mid;
         });
-        return this.invalidationQueue;
+
+        const midsMap = new Map<ASLEnvironment, ASLModuleId[]>();
+
+        for (const mid of mids) {
+            // If module is pending, cancel it
+            const pending = this.pending.get(mid);
+            if (pending !== undefined) {
+                pending.cancel(ASL_SIGNAL_MODULE_UNLOAD);
+
+                // We have to immediately remove from pending dict to prevent stack overflow
+                // as the `finally()` call won't call until next async event
+                this.pending.delete(mid);
+            } else if (!this.cache.delete(mid)) {
+                // Otherwise, if it is in cache, delete it. If it is not in the cache, 
+                // then module was never loaded and we can early return
+                continue;
+            }
+
+            const dependencies = this.dependencies.get(mid);
+            if (dependencies === undefined) continue;
+
+            for (const env of dependencies) {
+                let envList = midsMap.get(env);
+                if (envList === undefined) {
+                    envList = [];
+                    midsMap.set(env, envList);
+                }
+                envList.push(mid);
+            }
+        }
+
+        // Invalidate from all environments
+        for (const [env, envList] of midsMap.entries()) {
+            env.invalidate(envList);
+        }
     }
 }
 
@@ -685,7 +698,12 @@ export class ASLEnvironment {
                 if (mid === module.mid) throw new ASLImportError("Cannot import self.");
 
                 // Update modules archetype as approapriate
-                const arch = this.moduleArchetype.get(module.mid)!;
+                const arch = this.moduleArchetype.get(module.mid);
+                if (arch === undefined) {
+                    // Arch should always be available - if not, then this module was unloaded and
+                    // execution was cancelled.
+                    throw new ASLExecutionCancelledError();
+                }
                 this.moduleArchetype.set(module.mid, this.traverse(arch, mid));
 
                 return this.fetch(mid, module.mid).promise;
@@ -784,18 +802,12 @@ export class ASLEnvironment {
     }
 
     /**
-     * Only 1 invalidation process can run at a time, so stack them
-     * in a promise queue.
-     */
-    private invalidationQueue: Promise<void> = new Promise((resolve) => resolve());
-
-    /**
      * Invalidates the given module, causing it to reload. 
      * Subsequently reloads modules that depend on it.
      * 
      * @param path Module to invalidate
      */
-    public invalidate(paths: string[]): Promise<void>
+    public invalidate(paths: string[]): void
 
     /**
      * Invalidates the given module, causing it to reload. 
@@ -803,26 +815,21 @@ export class ASLEnvironment {
      * 
      * @param mid Module to invalidate
      */
-    public invalidate(mids: ASLModuleId[]): Promise<void>
+    public invalidate(mids: ASLModuleId[]): void
 
-    public invalidate(list: (ASLModuleId | string)[]): Promise<void> {
-        this.invalidationQueue = this.invalidationQueue.then(() => {
-            // Resolve mids
-            const mids = list.map(mid => {
-                if (typeof mid === "string") {
-                    mid = registry.getMid(mid);
-                }
-                return mid;
-            });
-
-            const promises = [];
-            for (const module of this.unload(mids)) {
-                promises.push(this.fetch(module));
+    public invalidate(list: (ASLModuleId | string)[]) {
+        // Resolve mids
+        const mids = list.map(mid => {
+            if (typeof mid === "string") {
+                mid = registry.getMid(mid);
             }
-
-            return Promise.allSettled(promises) as unknown as Promise<void>;
+            return mid;
         });
-        return this.invalidationQueue;
+
+        const promises = [];
+        for (const module of this.unload(mids)) {
+            promises.push(this.fetch(module));
+        }
     }
 
     /**
