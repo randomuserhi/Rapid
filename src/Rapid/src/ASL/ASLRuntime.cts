@@ -442,7 +442,7 @@ class ASLRegistry {
                 }
             }, ASLRegistry.moduleProxyHandler);
 
-            moduleFunc(envImport.bind(undefined, module), module, exports)
+            moduleFunc(envImport.bind(undefined, moduleInfo), module, exports)
                 .then(() => module.ready())
                 .catch((err) => reject(err));
         });
@@ -857,7 +857,7 @@ export class ASLEnvironment {
                         context.cache.set(mid, result);
 
                         // Settle promise based on result state
-                        if (result.ok()) resolve(result);
+                        if (result.ok()) resolve(result.item);
                         else reject(result.error);
                     }).catch(reject);
                 }

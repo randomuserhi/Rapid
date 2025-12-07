@@ -20,7 +20,7 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
 
         setTimeout(() => {
             const now = Date.now();
-            if (now - lastCollect > 50) {
+            if (now - lastCollect > 50 && collector.length > 0) {
                 ASLRegistry.invalidate(collector);
                 collector = [];
             }
