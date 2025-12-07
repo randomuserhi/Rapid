@@ -115,12 +115,12 @@ export class PackageRegistry {
 /**
  * Error that happens when package is not found
  */
-class PackageErrorNotFound extends Error {
+export class PackageNotFoundError extends Error {
     constructor(pckg: string, version: string) {
         super(`Package '${pckg}/${version}' was not found.`);
         this.name = "PackageErrorNotFound";
         if (Error.captureStackTrace) {
-            Error.captureStackTrace(this, PackageErrorNotFound);
+            Error.captureStackTrace(this, PackageNotFoundError);
         }
     }
 }
@@ -752,15 +752,24 @@ export class PackageManager {
     /** Makes the package, initializing the required tsconfigs */
     public async make(pckg: string, version: string) {
         const pckgInfo = await this.registry.get(pckg, version);
-        if (pckgInfo === undefined) throw new PackageErrorNotFound(pckg, version);
+        if (pckgInfo === undefined) throw new PackageNotFoundError(pckg, version);
         
         await this._make(pckgInfo);
     }
 
     /** Adds a package to watch list - automatically makes the package and builds it on changes. */
-    public async watch(pckg: string, version: string) {
-        const pckgInfo = await this.registry.get(pckg, version);
-        if (pckgInfo === undefined) throw new PackageErrorNotFound(pckg, version);
+    public async watch(pckg: PackageInfo): Promise<void>
+
+    /** Adds a package to watch list - automatically makes the package and builds it on changes. */
+    public async watch(pckg: string, version: string): Promise<void>
+    
+    public async watch(pckg: string | PackageInfo, version?: string) {
+        let pckgInfo: string | PackageInfo | undefined = pckg;
+        if (typeof pckgInfo === "string") {
+            const pckgName = pckgInfo;
+            pckgInfo = await this.registry.get(pckgInfo, version!);
+            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName, version!);
+        }
 
         const index = this.watchList.findIndex((rootName) => rootName === pckgInfo.baseDir);
         if (index < 0) {
@@ -775,7 +784,7 @@ export class PackageManager {
     /** Removes a package from the watch list */
     public async unwatch(pckg: string, version: string) {
         const pckgInfo = await this.registry.get(pckg, version);
-        if (pckgInfo === undefined) throw new PackageErrorNotFound(pckg, version);
+        if (pckgInfo === undefined) throw new PackageNotFoundError(pckg, version);
 
         const index = this.watchList.findIndex((rootName) => rootName === pckgInfo.baseDir);
         if (index >= 0) {
@@ -787,8 +796,57 @@ export class PackageManager {
         }
     }
 
+    
     /** Builds the given package */
-    public async build(pckg: string, version: string) {
-        // TODO(randomuserhi): ...
+    public async build(pckg: PackageInfo): Promise<void>
+
+    /** Builds the given package */
+    public async build(pckg: string, version: string): Promise<void>
+    
+    public async build(pckg: string | PackageInfo, version?: string) {
+        let pckgInfo: string | PackageInfo | undefined = pckg;
+        if (typeof pckgInfo === "string") {
+            const pckgName = pckgInfo;
+            pckgInfo = await this.registry.get(pckgInfo, version!);
+            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName, version!);
+        }
+
+        await this._make(pckgInfo);
+
+        const host = Ts.createSolutionBuilderHost(
+            Ts.sys,
+            Ts.createSemanticDiagnosticsBuilderProgram,
+            reportDiagnostic,
+            reportSolutionStatusChanged
+        );
+
+        // Overwrite behaviour for babel transpilation of asl files
+        const origWriteFile = host.writeFile;
+        host.writeFile = async (fileName, data, writeByteOrderMark) => {
+            const extname = Path.extname(fileName);
+            // Only handle `.js` output files and ignore `.cjs` and `.mjs`
+            switch (extname) {
+            case ".js": {
+                const babelResult = await transformAsync(data, ASLBabelConfig);
+                if (!babelResult || !babelResult.code) {
+                    // Error in transpilation, skip
+                    return;
+                }
+
+                const dir = Path.dirname(fileName);
+                if (dir !== Path.parse(dir).root) {
+                    await File.mkdir(dir, { recursive: true });
+                }
+                await File.writeFile(fileName, babelResult.code);
+            } break;
+
+            default: {
+                origWriteFile?.(fileName, data, writeByteOrderMark);
+            } break;
+            }
+        };
+
+        const builder = Ts.createSolutionBuilder(host, [pckgInfo.baseDir], {});
+        builder.build();
     }
 }

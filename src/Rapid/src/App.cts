@@ -1,4 +1,40 @@
+import Express from "express";
+import { PackageManager, PackageNotFoundError, PackageRegistry } from "./PackageManager.cjs";
 
+// Setup Rapid Lib
+
+const registry = new PackageRegistry(["E:\\Git\\RapidRegistry\\Apps"]);
+const pckgManager = new PackageManager(registry, "E:\\Git\\RapidRegistry\\@types");
+pckgManager.build("App", "1.0.0");
+
+// Host
+
+const PORT = 3000;
+
+const app = Express();
+
+app.get("/", (req, res) => {
+    res.redirect("/Rapid/Debug");
+});
+
+app.get("/:pckg/:version", (req, res) => {
+    const { pckg, version } = req.params;
+
+    registry.get(pckg, version).then((result) => {
+        if (result === undefined) throw new PackageNotFoundError(pckg, version);
+        pckgManager.watch(result);
+    }).catch((err) => {
+        // TODO(randomuserhi): Better error page response
+        console.error(`${pckg}/${version}`, err);
+        res.send(`${pckg}/${version} Not Found`);
+    });
+});
+
+app.listen(PORT, () => {
+    console.log(`Listening on port: ${PORT}`);
+});
+
+/*
 import File from "fs/promises";
 import Path from "path";
 import { ASLEnvironment, registry as ASLRegistry } from "./ASL/ASLRuntime.cjs";
@@ -125,4 +161,4 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
         environment.fetch(Path.join(pckg.baseDir, ".build", "back", "back.js"));
     }
 
-})();
+})();*/
