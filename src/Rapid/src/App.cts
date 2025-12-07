@@ -64,6 +64,12 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
                     const relPath = Path.relative(pckg.baseDir, fullPath);
                     return Path.join(buildDir, relPath);
                 }
+            } else if (Path.extname(path) === "") {
+                // For non-relative imports with no extension, just do a basic require
+                // This is for node modules like "path" or "file" etc...
+
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                return require(path);
             } else {
                 // Check if it is in root build folder first
                 let p = Path.join(rootBuild, path);
@@ -111,6 +117,8 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
                     p = Path.join(pckgFlex, path);
                     if (await fileExists(p)) return p;
                 }
+
+                // Otherwise return
             }
 
             throw new Error(`Could not find: ${path}`);

@@ -126,10 +126,10 @@ type ASLModuleFunc = (aslImport: ASLImportFunc, module: any, exports: ASLModuleO
 
 /**
  * Import options when using `require` in an ASL script
- * NOTE(randomuserhi): currently unused
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 interface ASLImportOptions {
+    /** Is the type of import a default import? `import X from "X.js"` */
+    defaultImport: boolean;
 }
 
 /**
@@ -580,7 +580,6 @@ const defaultImportHook = async (module: ASLModule, path: string) => {
     return path.startsWith(".") ? Path.join(module.dir, path) : path;
 };
 
-// TODO(randomuserhi)
 const defaultErrorHook = (mid: ASLModuleId, error?: any) => {
     console.error(`${registry.getPath(mid)}:`, error);
 };
@@ -628,7 +627,7 @@ export class ASLEnvironment {
     /**
      * Import hook that the user can define to transform paths before they are used
      */
-    public importHook: (module: ASLModule, path: string) => Promise<string> = defaultImportHook;
+    public importHook: (module: ASLModule, path: string, options?: ASLImportOptions) => Promise<string | ASLModuleObject> = defaultImportHook;
 
     /**
      * Error hook that the user can define to handle module errors
@@ -708,18 +707,25 @@ export class ASLEnvironment {
      * @param options Import options
      */
     private import(contextRef: ASLExecutionContext, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
-        // Pass path through import hook
-        return this.importHook(module, path).then(path => {
-            // Create default options
-            const parsedOptions: ASLImportOptions = {
-            };
+        // Create default options
+        const parsedOptions: ASLImportOptions = {
+            defaultImport: false
+        };
 
-            // Parse provided options
-            if (options !== undefined) {
-                for (const key in options) {
-                    const k = key as keyof ASLImportOptions;
-                    parsedOptions[k] = options[k];
-                }
+        // Parse provided options
+        if (options !== undefined) {
+            for (const key in options) {
+                const k = key as keyof ASLImportOptions;
+                parsedOptions[k] = options[k];
+            }
+        }
+
+        // Pass path through import hook
+        return this.importHook(module, path, options).then(path => {
+            // If import hook returned an object directly, use that instead
+            if (typeof path !== "string") {
+                // Manage default property to handle default imports
+                return new Promise((resolve) => resolve(path));
             }
 
             // Resolve type of import
@@ -757,8 +763,7 @@ export class ASLEnvironment {
                 env.moduleArchetype.set(module.mid, env.traverse(arch, mid));
 
                 return env.fetch(mid, module.mid).then((result) => {
-                    // TODO(randomuserhi): Better error message
-                    if (!result.ok()) throw new ASLImportError(`Module failed to execute.`);
+                    if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
 
                     return result.item;
                 });
@@ -766,6 +771,12 @@ export class ASLEnvironment {
             }
 
             throw new ASLImportError(`Import type is derived from file extension, please use a valid extension: ".cjs", ".mjs", ".js"`);
+        }).then((exports) => {
+            // Handle default imports
+            if (parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {
+                return exports.default;
+            }
+            return exports;
         });
     }
 

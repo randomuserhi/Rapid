@@ -43,7 +43,7 @@ export default function (babel: Babel): PluginObj {
                             const localName = specifier.local.name;
                             switch (specifier.type) {
                             case "ImportDefaultSpecifier": {
-                                defaultSpecifiers.push(`const ${localName} = (await require("${source}")).default`);
+                                defaultSpecifiers.push(`const ${localName} = await require("${source}", { defaultImport: true })`);
                             } break;
                             case "ImportSpecifier": {
                                 if (!t.isIdentifier(specifier.imported)) throw new Error(`Unsupported Identifier - TODO(support this...)`);
@@ -162,7 +162,7 @@ export default function (babel: Babel): PluginObj {
                                     case "ExportDefaultSpecifier": {
                                         if (!source) throw new Error("ExportDefaultSpecifier requires a source module");
 
-                                        return statement.ast`exports.default = (await require("${source.value}")).default;`;
+                                        return statement.ast`exports.default = await require("${source.value}", { defaultImport: true });`;
                                     }
                                     }
                                 }));
