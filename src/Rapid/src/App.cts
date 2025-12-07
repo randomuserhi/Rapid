@@ -66,7 +66,7 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
                 }
             } else if (Path.extname(path) === "") {
                 // For non-relative imports with no extension, just do a basic require
-                // This is for node modules like "path" or "file" etc...
+                // This is for standard library node modules like "path" or "file" etc...
 
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 return require(path);
@@ -117,8 +117,6 @@ import { PackageManager, PackageRegistry } from "./PackageManager.cjs";
                     p = Path.join(pckgFlex, path);
                     if (await fileExists(p)) return p;
                 }
-
-                // Otherwise return
             }
 
             throw new Error(`Could not find: ${path}`);
