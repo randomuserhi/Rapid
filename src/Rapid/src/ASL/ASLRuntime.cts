@@ -4,17 +4,8 @@
  * @randomuserhi 2025
  */
 
-// TODO(randomuserhi): Promise and execution probably needs to be refactored.
-//                     Currently way to bug-prone when multiple async invalidation calls are made.
-//                     Hot reloading should be far more stable - and execution cancellation (on module reloads) needs to be re-thought through
-//                     Node JS tends to exit execution on uncaught promise exceptions -> our design doesn't really take this properly into account.
-//
-//                     Most likely, completely re-write the runtime with a new execution / cancellation architecture
-
 import File from "fs/promises";
 import Path from "path";
-
-const noop = () => {};
 
 const CHAR_FORWARD_SLASH = 47; /* / */
 const CHAR_DOT = 46; /* . */
@@ -28,7 +19,7 @@ const CHAR_DOT = 46; /* . */
  * @returns File extension
  */
 function extname(path: string) {
-    if(typeof path !== "string") {
+    if (typeof path !== "string") {
         throw new TypeError(`The "path" argument must be of type string. Received type ${typeof path}`);
     }
 
@@ -39,117 +30,84 @@ function extname(path: string) {
     // Track the state of characters (if any) we see before our first dot and
     // after any path separator we find
     let preDotState = 0;
-    for(let i = path.length - 1; i >= 0; --i) {
+    for (let i = path.length - 1; i >= 0; --i) {
         const code = path.charCodeAt(i);
-        if(code === CHAR_FORWARD_SLASH) {
+        if (code === CHAR_FORWARD_SLASH) {
             // If we reached a path separator that was not part of a set of path
             // separators at the end of the string, stop now
-            if(!matchedSlash) {
+            if (!matchedSlash) {
                 startPart = i + 1;
                 break;
             }
             continue;
         }
-        if(end === -1) {
+        if (end === -1) {
             // We saw the first non-path separator, mark this as the end of our
             // extension
             matchedSlash = false;
             end = i + 1;
         }
-        if(code === CHAR_DOT) {
+        if (code === CHAR_DOT) {
             // If this is our first dot, mark it as the start of our extension
-            if(startDot === -1) {
+            if (startDot === -1) {
                 startDot = i;
-            } else if(preDotState !== 1) {
+            } else if (preDotState !== 1) {
                 preDotState = 1;
             }
-        } else if(startDot !== -1) {
+        } else if (startDot !== -1) {
             // We saw a non-dot and non-path separator before our dot, so we should
             // have a good chance at having a non-empty extension
             preDotState = -1;
         }
     }
 
-    if(startDot === -1 ||
-       end === -1 ||
-       // We saw a non-dot character immediately before the dot
-       preDotState === 0 ||
-       // The (right-most) trimmed path component is exactly '..'
-       (preDotState === 1 &&
-        startDot === end - 1 &&
-        startDot === startPart + 1)) {
+    if (startDot === -1 ||
+        end === -1 ||
+        // We saw a non-dot character immediately before the dot
+        preDotState === 0 ||
+        // The (right-most) trimmed path component is exactly '..'
+        (preDotState === 1 &&
+            startDot === end - 1 &&
+            startDot === startPart + 1)) {
         return "";
     }
     return path.slice(startDot, end);
 }
 
 /**
- * A promise wrapper for promises that can be cancelled.
+ * Stores a reference to a value.
+ * Errors when reference is set to `Ref.NULLPTR`
  */
-class CancellablePromise<T> {
-    readonly promise: Promise<T>;
-    readonly cancel: (reason?: any) => void;
-    readonly isCancelled: boolean = false; 
-    readonly cancelReason?: any;
+class Ref<T> {
+    public static NULLPTR = Symbol("Ref.NULLPTR");
 
-    constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void, self: CancellablePromise<T>) => void, oncancel?: (reason?: any) => void) {
-        this.cancel = undefined!;
-        this.promise = new Promise((resolve, reject) => {
-            (this as any).cancel = (reason?: any) => {
-                if (this.isCancelled) return;
-                (this as any).isCancelled = true;
-                (this as any).cancelReason = reason;
-                oncancel?.(reason);
-                reject(reason);
-            };
-            executor(resolve, reject, this);
-        });
-        if (this.cancel === undefined) throw new Error("Could not generate cancel function.");
+    private item: T | typeof Ref<T>["NULLPTR"];
+
+    constructor(item: Ref<T>["item"] = Ref.NULLPTR) {
+        this.item = item;
     }
 
-    /**
-     * Attaches callbacks for the resolution and/or rejection of the Promise.
-     * @param onfulfilled The callback to execute when the Promise is resolved.
-     * @param onrejected The callback to execute when the Promise is rejected.
-     * @returns A Promise for the completion of which ever callback is executed.
-     */
-    public then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): CancellablePromise<TResult1 | TResult2> {
-        return new CancellablePromise((resolve, reject) => {
-            this.promise.then(onfulfilled, onrejected).then(resolve, reject);
-        }, this.cancel);
+    public deref(): T {
+        if (this.isNull()) throw new ReferenceError("Cannot deref 'Ref.NULLPTR'");
+        return this.item as T;
     }
 
-    /**
-     * Attaches a callback for only the rejection of the Promise.
-     * @param onrejected The callback to execute when the Promise is rejected.
-     * @returns A Promise for the completion of the callback.
-     */
-    public catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): CancellablePromise<T | TResult> {
-        return new CancellablePromise((resolve, reject) => {
-            this.promise.catch(onrejected).then(resolve, reject);
-        }, this.cancel);
+    public set(value: Ref<T>["item"]) {
+        this.item = value;
     }
 
-    /**
-     * Attaches a callback that is invoked when the Promise is settled (fulfilled or rejected). The
-     * resolved value cannot be modified from the callback.
-     * @param onfinally The callback to execute when the Promise is settled (fulfilled or rejected).
-     * @returns A Promise for the completion of the callback.
-     */
-    public finally(onfinally?: (() => void) | undefined | null): CancellablePromise<T> {
-        return new CancellablePromise((resolve) => {
-            this.promise.finally(onfinally).then(resolve);
-        }, this.cancel);
+    public isNull(): boolean {
+        return this.item === Ref.NULLPTR;
     }
 }
+
+/** Module ID type */
+type ASLModuleId = number;
 
 /**
  * Module object, represents exports for a module.
  */
 type ASLModuleObject = Record<PropertyKey, any>;
-
-/** Module ID type */
-type ASLModuleId = number;
 
 /** Function that imports another module from an ASL module execution context. */
 type ASLEnvImportFunc = (module: ASLModule, path: string, options?: ASLImportOptions) => Promise<ASLModuleObject>;
@@ -192,13 +150,91 @@ class ASLModule {
     /**
      * Executes the given module, returning the module object containing its exports.
      */
-    readonly exec: (aslImport: any) => Promise<ASLModuleObject> = undefined!;
+    readonly exec: (aslImport: any) => ASLRequest<ASLModuleObject> = undefined!;
 
     constructor(mid: ASLModuleId, path: string) {
         this.path = path;
         this.dir = Path.dirname(this.path);
 
         this.mid = mid;
+    }
+}
+
+/**
+ * A result for a given request.
+ * Can be checked if the result is available or if it errored.
+ * 
+ * This is preferred over Promise as handling uncaught exceptions in promises is
+ * difficult to maintain.
+ */
+class ASLRequestResult<T, ErrorType = any> {
+    private static OK = Symbol("ASLRequestResult.OK"); 
+
+    error: typeof ASLRequestResult<T, ErrorType>["OK"] | ErrorType;
+    item: T;
+
+    constructor(result?: T, error: ASLRequestResult<T, ErrorType>["error"] = ASLRequestResult.OK) {
+        this.item = result!;
+        this.error = error;
+    }
+
+    public ok() {
+        return this.error === ASLRequestResult.OK;
+    }
+}
+
+/**
+ * Static resolve handler for `ASLRequest`s.
+ */
+function ASLRequestResolve<T, ErrorType = any>(resolve: (value: ASLRequestResult<T, ErrorType> | PromiseLike<ASLRequestResult<T, ErrorType>>) => void, result: T) {
+    resolve(new ASLRequestResult<T, ErrorType>(result));
+}
+
+/**
+ * Creates a Promise that returns an ASLRequestResult object instead.
+ * These promises never throw.
+ */
+function ASLRequest<T, ErrorType = any>(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: ErrorType) => void) => void): Promise<ASLRequestResult<T, ErrorType>> {
+    return new Promise<ASLRequestResult<T, ErrorType>>((resolve, reject) => {
+        executor((ASLRequestResolve as any).bind(undefined, resolve), reject);
+    }).catch(reason => new ASLRequestResult<T, ErrorType>(undefined, reason));
+}
+
+/**
+ * ASL Request type
+ */
+type ASLRequest<T, ErrorType = any> = Promise<ASLRequestResult<T, ErrorType>>;
+
+/**
+ * ASL Request with a context object, used to associate a request with a given object.
+ * 
+ * This is used to handle cancelling requests as javascript doesn't let you cancel execution.
+ * Instead, the request interacts with external resources via its associated context, and by
+ * unbinding the context we can mimic cancelling its execution.
+ */
+interface ASLRequestWithContext<T, Context, ErrorType = any> {
+    contextRef: Ref<Context>;
+    request: ASLRequest<T, ErrorType>;
+    cancel: (reason?: any) => void;
+}
+
+/**
+ * Fetch request for module information. Used by Registry.
+ */
+interface ASLModuleFetchRequest extends ASLRequestWithContext<ASLModule, ASLRegistry> { 
+    mid: ASLModuleId
+}
+
+/**
+ * Error that occurs when module fetch is cancelled
+ */
+export class ASLModuleFetchCancelledError extends Error {
+    constructor() {
+        super("Module fetch was cancelled.");
+        this.name = "ASLModuleFetchCancelledError";
+        if ((Error as any).captureStackTrace) {
+            (Error as any).captureStackTrace(this, ASLModuleFetchCancelledError);
+        }
     }
 }
 
@@ -260,7 +296,7 @@ class ASLRegistry {
     private readonly cache = new Map<ASLModuleId, ASLModule>();
 
     /** Stores pending fetch requests for modules. */
-    private readonly pending = new Map<ASLModuleId, CancellablePromise<ASLModule>>();
+    private readonly pending = new Map<ASLModuleId, ASLModuleFetchRequest>();
 
     /** 
      * Dependency map of module to ASL environment.
@@ -270,13 +306,30 @@ class ASLRegistry {
     private readonly dependencies = new Map<ASLModuleId, Set<ASLEnvironment>>();
 
     /**
+     * Cancels a given request for a module.
+     * 
+     * @param fetchRequest Request to cancel
+     * @param reject `reject` function used to settle the request promise
+     */
+    private cancelModuleFetchRequest(fetchRequest: ASLModuleFetchRequest, reject: (reason?: any) => void) {
+        // Unbind from context
+        fetchRequest.contextRef.set(Ref.NULLPTR);
+        
+        // Remove from pending
+        this.pending.delete(fetchRequest.mid);
+
+        // Reject request promise
+        reject(new ASLModuleFetchCancelledError());
+    }
+
+    /**
      * Loads a module into cache.
      * 
      * @param mid module id to fetch
      * @param env Environment that is fetching the module - used internally for book keeping dependencies for hot reloading
      * @returns The loaded module information
      */
-    public fetch(mid: ASLModuleId, env?: ASLEnvironment): CancellablePromise<ASLModule> {
+    public fetch(mid: ASLModuleId, env?: ASLEnvironment): ASLRequest<ASLModule> {
         const path = this.paths.get(mid);
         if (path === undefined) throw new Error(`Failed to obtain path for module id: ${mid}`);
 
@@ -291,12 +344,20 @@ class ASLRegistry {
         }
 
         // Get pending request if module has been loaded before but is still waiting.
-        let promise = this.pending.get(mid);
+        let fetchRequest = this.pending.get(mid);
 
-        if (promise === undefined) {
+        if (fetchRequest === undefined) {
             // If module is not pending, create the request
 
-            promise = new CancellablePromise<ASLModule>((resolve, reject) => {
+            const _fetchRequest: ASLModuleFetchRequest = {
+                mid,
+                contextRef: new Ref(this),
+                request: undefined!,
+                cancel: undefined!
+            };
+            _fetchRequest.request = ASLRequest((resolve, reject) => {
+                _fetchRequest.cancel = this.cancelModuleFetchRequest.bind(this, _fetchRequest, reject);
+
                 // Try get module from cache
                 if (this.cache.has(mid)) {
                     resolve(this.cache.get(mid)!);
@@ -304,6 +365,9 @@ class ASLRegistry {
                     // If its not in cache or pending, make a request to fetch it
                     File.readFile(path, { encoding: "utf-8" })
                         .then(code => {
+                            // Get request context
+                            const context = _fetchRequest.contextRef.deref();
+
                             // Create module function.
                             // This runs in an async function as ASL needs to support the `await` keyword at the top-level.
                             // The function has the parameters `require`, `module` and `exports` to provide the necessary keywords.
@@ -313,36 +377,35 @@ class ASLRegistry {
 
                             // Create module info
                             const moduleInfo = new ASLModule(mid, path);
-                            (moduleInfo as any).exec = this.execModule.bind(this, moduleInfo, moduleFunc);
+                            (moduleInfo as any).exec = context.execModule.bind(context, moduleInfo, moduleFunc);
 
                             // Add to cache
-                            this.cache.set(mid, moduleInfo);
+                            context.cache.set(mid, moduleInfo);
 
                             // Resolve request
                             resolve(moduleInfo);
                         })
-                        .catch(e => reject(e));
+                        .catch(reject);
                 }
             });
 
             // Add to map of pending requests
-            this.pending.set(mid, promise);
+            fetchRequest = _fetchRequest;
+            this.pending.set(mid, fetchRequest);
 
-            // When request finishes, remove from pending
-            promise.catch(noop).finally(() => {
-                // On unload signal, skip handling as it is already handled automatically by ASL synchronously
-                // by the `unload` method.
-                // 
-                // This is because we cannot trust order of execution by JS engine's micro-tasks.
-                // Pending needs to be deleted on cancel, before we re-request execution of the modules,
-                // but this is not guaranteed if we rely on JS micro-task scheduling.
-                if (promise!.cancelReason === ASL_SIGNAL_MODULE_UNLOAD) return;
+            // When request successfully finishes, remove from pending
+            _fetchRequest.request.then(() => {
+                // Check if request is still bound to request context,
+                // If not then the module must have been detached (unloaded from registry)
+                // and thus should not do anything.
+                if (_fetchRequest.contextRef.isNull()) return;
                 
-                this.pending.delete(mid);
+                const context = _fetchRequest.contextRef.deref();
+                context.pending.delete(mid);
             });
         }
 
-        return promise;
+        return fetchRequest.request;
     }
 
     /**
@@ -360,8 +423,8 @@ class ASLRegistry {
      * 
      * @param moduleFunc The ASLModuleFunc of the module being executed.
      */
-    private execModule(context: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): Promise<ASLModuleObject> {
-        return new Promise((resolve) => {
+    private execModule(moduleInfo: ASLModule, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc): ASLRequest<ASLModuleObject> {
+        return ASLRequest((resolve, reject) => {
             let mutable = true;
 
             const exports = new Proxy<Record<PropertyKey, any>>({}, {
@@ -379,15 +442,9 @@ class ASLRegistry {
                 }
             }, ASLRegistry.moduleProxyHandler);
 
-            moduleFunc(envImport.bind(undefined, context), module, exports)
+            moduleFunc(envImport.bind(undefined, module), module, exports)
                 .then(() => module.ready())
-                .catch((err) => {
-                    if (err instanceof ASLExecutionCancelledError) return;
-                    if (err === ASL_SIGNAL_MODULE_UNLOAD) return;
-                    
-                    // TODO(randomuserhi): Better error handling
-                    console.error(err);
-                });
+                .catch((err) => reject(err));
         });
     }
 
@@ -396,16 +453,16 @@ class ASLRegistry {
      * 
      * @param path Module to mark as invalidated
      */
-    public invalidate(paths: string[]): void;
+    public invalidate(paths: string[]): Promise<ASLRequestResult<ASLModuleObject>[][]>;
 
     /**
      * Invalidates a module. All environments including said module will automatically reload said module.
      * 
      * @param mid Module to mark as invalidated
      */
-    public invalidate(mids: ASLModuleId[]): void;
+    public invalidate(mids: ASLModuleId[]): Promise<ASLRequestResult<ASLModuleObject>[][]>;
 
-    public invalidate(list: (ASLModuleId | string)[]): void {
+    public invalidate(list: (ASLModuleId | string)[]) {
         if (list.length === 0) return;
 
         // Resolve mids
@@ -422,11 +479,7 @@ class ASLRegistry {
             // If module is pending, cancel it
             const pending = this.pending.get(mid);
             if (pending !== undefined) {
-                pending.cancel(ASL_SIGNAL_MODULE_UNLOAD);
-
-                // We have to immediately remove from pending dict to prevent stack overflow
-                // as the `finally()` call won't call until next async event
-                this.pending.delete(mid);
+                pending.cancel();
             } else if (!this.cache.delete(mid)) {
                 // Otherwise, if it is in cache, delete it. If it is not in the cache, 
                 // then module was never loaded and we can early return
@@ -447,9 +500,11 @@ class ASLRegistry {
         }
 
         // Invalidate from all environments
+        const promises = [];
         for (const [env, envList] of midsMap.entries()) {
-            env.invalidate(envList);
+            promises.push(env.invalidate(envList));
         }
+        return Promise.all(promises);
     }
 }
 
@@ -459,6 +514,32 @@ class ASLRegistry {
  * Keeps track of which environments depend on which modules for hot reloading.
  */
 export const registry = new ASLRegistry();
+
+/**
+ * Error that occurs whilst importing modules
+ */
+export class ASLImportError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ASLImportError";
+        if ((Error as any).captureStackTrace) {
+            (Error as any).captureStackTrace(this, ASLImportError);
+        }
+    }
+}
+
+/**
+ * Error that occurs when execution is cancelled
+ */
+export class ASLExecutionCancelledError extends Error {
+    constructor() {
+        super("Module execution was cancelled.");
+        this.name = "ASLExecutionCancelledError";
+        if ((Error as any).captureStackTrace) {
+            (Error as any).captureStackTrace(this, ASLExecutionCancelledError);
+        }
+    }
+}
 
 type ASLArchetypeId = string;
 
@@ -495,62 +576,31 @@ class ASLArchetype {
     }
 }
 
-/**
- * Pending fetch request made by an environment.
- * Used to track which modules made what requests.
- */
-interface ASLRequest {
-    promise: CancellablePromise<ASLModuleObject>,
-
-    /** Set of modules that are awaiting the given request */
-    requesters: Set<ASLModuleId>
-}
-
-/**
- * ASL module unload signal. 
- * Used to indicate when execution was cancelled due to unloading the module rather than an error or other reason.
- */
-const ASL_SIGNAL_MODULE_UNLOAD = Symbol("ASL.SIGNAL_MODULE_UNLOAD");
-
-/**
- * Error that happens when execution of a module is cancelled
- */
-class ASLExecutionCancelledError extends Error {
-    constructor() {
-        super("Execution was cancelled.");
-        this.name = "ASLExecutionCancelledError";
-        if (Error.captureStackTrace) {
-            Error.captureStackTrace(this, ASLExecutionCancelledError);
-        }
-    }
-}
-
-/**
- * Error that occure whilst importing modules
- */
-class ASLImportError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "ASLImportError";
-        if (Error.captureStackTrace) {
-            Error.captureStackTrace(this, ASLImportError);
-        }
-    }
-}
-
 const defaultImportHook = async (module: ASLModule, path: string) => {
     return path.startsWith(".") ? Path.join(module.dir, path) : path;
 };
+
+// TODO(randomuserhi)
+const defaultErrorHook = (mid: ASLModuleId, error?: any) => {
+    console.error(`${registry.getPath(mid)}:`, error);
+};
+
+type ASLExecutionContext = Ref<ASLEnvironment>;
+
+interface ASLExecution extends ASLRequestWithContext<ASLModuleObject, ASLEnvironment> {
+    mid: ASLModuleId;
+    requesters: Set<ASLModuleId>;
+}
 
 /**
  * ASL Environment.
  */
 export class ASLEnvironment {
     /** Module cache. Maps module to the cached module object. */
-    private readonly cache = new Map<ASLModuleId, ASLModuleObject>();
+    private readonly cache = new Map<ASLModuleId, ASLRequestResult<ASLModuleObject>>();
 
     /** Stores pending fetch requests for modules. */
-    private readonly pending = new Map<ASLModuleId, ASLRequest>();
+    private readonly pending = new Map<ASLModuleId, ASLExecution>();
 
     /** 
      * Archetype tracking for modules.
@@ -579,6 +629,11 @@ export class ASLEnvironment {
      * Import hook that the user can define to transform paths before they are used
      */
     public importHook: (module: ASLModule, path: string) => Promise<string> = defaultImportHook;
+
+    /**
+     * Error hook that the user can define to handle module errors
+     */
+    public errorHook: (mid: ASLModuleId, error?: any) => void = defaultErrorHook;
 
     constructor() {
         // Register root archetype
@@ -652,11 +707,9 @@ export class ASLEnvironment {
      * @param path File path to module
      * @param options Import options
      */
-    private import(promise: CancellablePromise<ASLModuleObject>, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
+    private import(contextRef: ASLExecutionContext, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
         // Pass path through import hook
         return this.importHook(module, path).then(path => {
-            if (promise.isCancelled) throw new ASLExecutionCancelledError();
-
             // Create default options
             const parsedOptions: ASLImportOptions = {
             };
@@ -697,21 +750,146 @@ export class ASLEnvironment {
 
                 if (mid === module.mid) throw new ASLImportError("Cannot import self.");
 
-                // Update modules archetype as approapriate
-                const arch = this.moduleArchetype.get(module.mid);
-                if (arch === undefined) {
-                    // Arch should always be available - if not, then this module was unloaded and
-                    // execution was cancelled.
-                    throw new ASLExecutionCancelledError();
-                }
-                this.moduleArchetype.set(module.mid, this.traverse(arch, mid));
+                const env = contextRef.deref();
 
-                return this.fetch(mid, module.mid).promise;
+                // Update modules archetype as approapriate
+                const arch = env.moduleArchetype.get(module.mid)!;
+                env.moduleArchetype.set(module.mid, env.traverse(arch, mid));
+
+                return env.fetch(mid, module.mid).then((result) => {
+                    // TODO(randomuserhi): Better error message
+                    if (!result.ok()) throw new ASLImportError(`Module failed to execute.`);
+
+                    return result.item;
+                });
             }
             }
 
             throw new ASLImportError(`Import type is derived from file extension, please use a valid extension: ".cjs", ".mjs", ".js"`);
         });
+    }
+
+    /**
+     * Cancels the execution of a given module.
+     * 
+     * @param execution Execution to cancel
+     * @param reject `reject` function from the execution promise
+     */
+    private cancelModuleExecution(execution: ASLExecution, reject: (reason?: any) => void) {
+        // Unbind execution context
+        execution.contextRef.set(Ref.NULLPTR);
+        
+        // Remove from pending
+        this.pending.delete(execution.mid);
+
+        // Reject execution promise
+        reject(new ASLExecutionCancelledError());
+    }
+
+    /**
+     * Loads a module into the environment
+     * 
+     * @param mid module id
+     * @param requester the module making the request - used for debugging
+     */
+    public fetch(mid: ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleObject>
+
+    /**
+     * Loads a module into the environment
+     * 
+     * @param path File path to module
+     * @param requester the module making the request - used for debugging
+     */
+    public fetch(path: string, requester?: ASLModuleId): ASLRequest<ASLModuleObject>
+
+    public fetch(mid: string | ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleObject> {
+        // Resolve mid from path
+        if (typeof mid === "string") {
+            mid = registry.getMid(mid);
+        }
+
+        // Get pending request if module has been loaded before but is still waiting.
+        let execution = this.pending.get(mid);
+
+        if (execution === undefined) {
+            // If module is not pending, create the request
+
+            const _execution: ASLExecution = {
+                mid,
+                contextRef: new Ref(this),
+                request: undefined!,
+                cancel: undefined!,
+                requesters: new Set()
+            };
+
+            _execution.request = ASLRequest<ASLModuleObject>((resolve, reject) => {
+                _execution.cancel = this.cancelModuleExecution.bind(this, _execution, reject);
+
+                // Get reference to execution context
+                const contextRef = _execution.contextRef;
+
+                // Try get module from cache
+                if (this.cache.has(mid)) {
+                    // Settle promise based on cached result
+                    const cachedResult = this.cache.get(mid)!;
+                    if (cachedResult.ok()) resolve(cachedResult.item);
+                    else reject(cachedResult.error);
+                } else {
+                    // If its not in cache or pending, make a request to fetch it
+                    const moduleInfoRequest = registry.fetch(mid, this);
+
+                    moduleInfoRequest.then(result => {
+                        if (!result.ok()) throw result.error;
+
+                        // Get execution context
+                        const context = contextRef.deref();
+                        
+                        // Assign archetype
+                        context.moduleArchetype.set(mid, context.traverse(context.rootArchetype, mid));
+
+                        // Execute module
+                        return result.item.exec(context.import.bind(context, contextRef));
+                    }).then((result) => {
+                        // Get execution context
+                        const context = contextRef.deref();
+
+                        // Store module object into cache
+                        context.cache.set(mid, result);
+
+                        // Settle promise based on result state
+                        if (result.ok()) resolve(result);
+                        else reject(result.error);
+                    }).catch(reject);
+                }
+            });
+
+            // Add to map of pending requests
+            execution = _execution;
+            this.pending.set(mid, execution);
+
+            // Clean up request on finish
+            _execution.request.then((result) => {
+                // Check if module is still bound to an execution context,
+                // If not then the module must have been detached (unloaded from environment)
+                // and thus should not do anything.
+                if (_execution.contextRef.isNull()) return;
+
+                const context = _execution.contextRef.deref();
+
+                // Trigger error hook
+                if (!result.ok()) {
+                    context.errorHook(mid, result.error);
+                }
+
+                // Remove from pending for book keeping
+                context.pending.delete(mid);
+            });
+        }
+
+        // Keep track of the requester
+        if (requester !== undefined) execution.requesters.add(requester);
+
+        return execution.request;
     }
 
     /**
@@ -724,18 +902,7 @@ export class ASLEnvironment {
         // If module is pending, cancel it
         const request = this.pending.get(mid);
         if (request !== undefined) {
-            // Pass `ASL_SIGNAL_MODULE_UNLOAD` so that cancel logic knows that 
-            // ASL has handled everything already synchronously and the async task should not
-            // handle it.
-            //
-            // Refer to `this.fetch`
-            request.promise.cancel(ASL_SIGNAL_MODULE_UNLOAD);
-
-            // We have to handle removal from pending dict synchronously to prevent stack overflow
-            // as the `finally()` call that normally handles this in `this.fetch` won't call until next
-            // async micro-task event - which won't occure until after this synchronous function 
-            // executes.
-            this.pending.delete(mid);
+            request.cancel();
         } else if (!this.cache.delete(mid)) {
             // Otherwise, if it is in cache, delete it. If it is not in the cache, 
             // then module was never loaded and we can early return
@@ -807,7 +974,7 @@ export class ASLEnvironment {
      * 
      * @param path Module to invalidate
      */
-    public invalidate(paths: string[]): void
+    public invalidate(paths: string[]): Promise<ASLRequestResult<ASLModuleObject>[]>
 
     /**
      * Invalidates the given module, causing it to reload. 
@@ -815,7 +982,7 @@ export class ASLEnvironment {
      * 
      * @param mid Module to invalidate
      */
-    public invalidate(mids: ASLModuleId[]): void
+    public invalidate(mids: ASLModuleId[]): Promise<ASLRequestResult<ASLModuleObject>[]>
 
     public invalidate(list: (ASLModuleId | string)[]) {
         // Resolve mids
@@ -830,85 +997,6 @@ export class ASLEnvironment {
         for (const module of this.unload(mids)) {
             promises.push(this.fetch(module));
         }
-    }
-
-    /**
-     * Loads a module into the environment
-     * 
-     * @param mid module id
-     * @param requester the module making the request - used for debugging
-     */
-    public fetch(mid: ASLModuleId, requester?: ASLModuleId): CancellablePromise<ASLModuleObject>
-
-    /**
-     * Loads a module into the environment
-     * 
-     * @param path File path to module
-     * @param requester the module making the request - used for debugging
-     */
-    public fetch(path: string, requester?: ASLModuleId): CancellablePromise<ASLModuleObject>
-
-    public fetch(mid: string | ASLModuleId, requester?: ASLModuleId) {
-        // Resolve mid from path
-        if (typeof mid === "string") {
-            mid = registry.getMid(mid);
-        }
-
-        // Get pending request if module has been loaded before but is still waiting.
-        let request = this.pending.get(mid);
-
-        if (request === undefined) {
-            // If module is not pending, create the request
-
-            const promise = new CancellablePromise<ASLModuleObject>((resolve, reject, self) => {
-                // Try get module from cache
-                if (this.cache.has(mid)) {
-                    resolve(this.cache.get(mid)!);
-                } else {
-                    // If its not in cache or pending, make a request to fetch it
-                    registry.fetch(mid, this)
-                        .then(info => {
-                            // Assign archetype
-                            this.moduleArchetype.set(mid, this.traverse(this.rootArchetype, mid));
-
-                            // Execute module
-                            return info.exec(this.import.bind(this, self));
-                        })
-                        .then((obj) => {
-                            // Store module object into cache
-                            this.cache.set(mid, obj);
-
-                            // Resolve promise
-                            resolve(obj);
-                        })
-                        .catch(reject);
-                }
-            });
-
-            // Add to map of pending requests
-            request = {
-                promise,
-                requesters: new Set()
-            };
-            this.pending.set(mid, request);
-
-            // When request finishes, remove from pending
-            promise.catch(noop).finally(() => {
-                // On unload signal, skip handling as it is already handled automatically by ASL synchronously
-                // by the `unload` method.
-                // 
-                // This is because we cannot trust order of execution by JS engine's micro-tasks.
-                // Pending needs to be deleted on cancel, before we re-request execution of the modules,
-                // but this is not guaranteed if we rely on JS micro-task scheduling.
-                if (promise.cancelReason === ASL_SIGNAL_MODULE_UNLOAD) return;
-                
-                this.pending.delete(mid);
-            });
-        }
-
-        // Keep track of the requester
-        if (requester !== undefined) request.requesters.add(requester);
-
-        return request.promise;
+        return Promise.all(promises);
     }
 }
