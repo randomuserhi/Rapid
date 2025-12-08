@@ -28,12 +28,9 @@ function relPath(baseDir: string, path: string) {
 
 const RAPID_CONFIG_NAME = "rapid.config.json";
 
-interface PackageInfo {
+export interface PackageInfo {
     /** package name */
     pckg: string;
-
-    /** version name */
-    version: string;
 
     /** Package base directory */
     baseDir: string;
@@ -54,24 +51,22 @@ export class PackageRegistry {
     }
 
     /**
-     * Resolves a package name and version to its actual location on disk.
+     * Resolves a package name to its actual location on disk.
      * If there is a conflict, prioritises the first occurence. 
      * Priority is order of directories, where firstmost is given highest priority.
      * 
      * @param pckg Package name
-     * @param version Version name
      * @returns Package info or undefined if the package is not found
      */
-    public async get(pckg: string, version: string): Promise<PackageInfo | undefined> {
+    public async get(pckg: string): Promise<PackageInfo | undefined> {
         for (const dir of this.directories) {
-            const baseDir = Path.resolve(Path.join(dir, pckg, version));
+            const baseDir = Path.resolve(Path.join(dir, pckg));
             const configPath = Path.join(baseDir, RAPID_CONFIG_NAME);
             const configStat = await fileStat(configPath);
 
             if (configStat !== undefined && configStat.isFile()) {
                 return {
                     pckg,
-                    version,
                     baseDir,
                     configPath
                 };
@@ -89,20 +84,18 @@ export class PackageRegistry {
 
         const dirIndex = this.directories.findIndex(dir => path.startsWith(Path.resolve(dir)));
         if (dirIndex < 0) return undefined;
-        
+
         const dir = this.directories[dirIndex];
         const parts = path.replace(dir, "").split(Path.sep);
         const pckg = parts[1];
-        const version = parts[2];
-        
-        const baseDir = Path.resolve(Path.join(dir, pckg, version));
+
+        const baseDir = Path.resolve(Path.join(dir, pckg));
         const configPath = Path.join(baseDir, RAPID_CONFIG_NAME);
         const configStat = await fileStat(configPath);
 
         if (configStat !== undefined && configStat.isFile()) {
             return {
                 pckg,
-                version,
                 baseDir,
                 configPath
             };
@@ -116,8 +109,8 @@ export class PackageRegistry {
  * Error that happens when package is not found
  */
 export class PackageNotFoundError extends Error {
-    constructor(pckg: string, version: string) {
-        super(`Package '${pckg}/${version}' was not found.`);
+    constructor(pckg: string) {
+        super(`Package '${pckg}' was not found.`);
         this.name = "PackageErrorNotFound";
         if (Error.captureStackTrace) {
             Error.captureStackTrace(this, PackageNotFoundError);
@@ -128,7 +121,7 @@ export class PackageNotFoundError extends Error {
 /**
  * Package config
  */
-interface PackageConfig {
+export interface PackageConfig {
     back?: {
         cts?: boolean;
         mts?: boolean;
@@ -312,7 +305,7 @@ export class PackageManager {
         this.configWatcher?.close();
         this.configWatcher = undefined;
     }
-    
+
     private startAutomaticBuilds() {
         if (this.watchList.length === 0) return;
         this.builder.start(this.watchList);
@@ -358,13 +351,12 @@ export class PackageManager {
         if (pckgConfig.dependencies !== undefined) {
             const jobs: Promise<void>[] = [];
 
+            // TODO(randomuserhi): Make dependencies an array not a k,v pair
             for (const dependency in pckgConfig.dependencies) {
                 if (dependency === pckgInfo.pckg) continue; // Skip dependency on self
 
-                const depVersion = pckgConfig.dependencies[dependency];
-
                 jobs.push(
-                    this.registry.get(dependency, depVersion)
+                    this.registry.get(dependency)
                         .then(info => {
                             if (info !== undefined) dependencies.push(info);
                         })
@@ -419,23 +411,23 @@ export class PackageManager {
                     sourceMap: false
                 }
             };
-            
+
             await File.writeFile(tsconfigBasePath, JSON.stringify(tsconfigBase, null, 2));
         }
-        
+
         // Generate configs for each repositories
-        
+
         if (pckgConfig.flex !== undefined) {
             const repo = "flex";
             const repoDir = Path.join(pckgInfo.baseDir, `${repo}`);
-            
+
             const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-            
+
             // Make the directory
             await File.mkdir(repoDir, { recursive: true });
             // Make config folder
             await File.mkdir(repoTsconfigDir, { recursive: true });
-            
+
             // Build directories
             const repoBuildDir = Path.join(buildDir, `${repo}`);
             const repoTypeDir = Path.join(typeDir, `${repo}`);
@@ -482,12 +474,12 @@ export class PackageManager {
             // Add dependency paths
             const references: Ts.ProjectReference[] = [];
             for (const dependency of dependencies) {
-                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/${dependency.version}/*`] = [
+                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/*`] = [
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*"))
                 ];
                 references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, repo, "tsconfig.json")) });
             }
-            
+
             await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
 
             // ASL tsconfig
@@ -508,14 +500,14 @@ export class PackageManager {
         if (pckgConfig.back !== undefined) {
             const repo = "back";
             const repoDir = Path.join(pckgInfo.baseDir, `${repo}`);
-            
+
             const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-            
+
             // Make the directory
             await File.mkdir(repoDir, { recursive: true });
             // Make config folder
             await File.mkdir(repoTsconfigDir, { recursive: true });
-            
+
             // Build directories
             const repoBuildDir = Path.join(buildDir, `${repo}`);
             const repoTypeDir = Path.join(typeDir, `${repo}`);
@@ -525,7 +517,7 @@ export class PackageManager {
             const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
             const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
             const repoTsconfigCtsPath = Path.join(repoTsconfigDir, "tsconfig.cjs.json");
-            
+
             // Does the package allow .cts ?
             const ctsEnabled = pckgConfig.back.cts === true;
 
@@ -570,7 +562,7 @@ export class PackageManager {
             // Add dependency paths
             const references: Ts.ProjectReference[] = [];
             for (const dependency of dependencies) {
-                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/${dependency.version}/*`] = [
+                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/*`] = [
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*")),
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", "flex", "*"))
                 ];
@@ -588,7 +580,7 @@ export class PackageManager {
                 // Add to reference list
                 references.push({ path: relPath(repoTsconfigDir, Path.join(flexPath, "tsconfig.json")) });
             }
-            
+
             await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
 
             // ASL tsconfig
@@ -621,22 +613,22 @@ export class PackageManager {
                     ],
                     references
                 };
-            
-                await File.writeFile(repoTsconfigCtsPath, JSON.stringify(repoTsconfigCts, null, 2));               
+
+                await File.writeFile(repoTsconfigCtsPath, JSON.stringify(repoTsconfigCts, null, 2));
             }
         }
 
         if (pckgConfig.front !== undefined) {
             const repo = "front";
             const repoDir = Path.join(pckgInfo.baseDir, `${repo}`);
-            
+
             const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-            
+
             // Make the directory
             await File.mkdir(repoDir, { recursive: true });
             // Make config folder
             await File.mkdir(repoTsconfigDir, { recursive: true });
-            
+
             // Build directories
             const repoBuildDir = Path.join(buildDir, `${repo}`);
             const repoTypeDir = Path.join(typeDir, `${repo}`);
@@ -646,7 +638,7 @@ export class PackageManager {
             const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
             const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
             const repoTsconfigMtsPath = Path.join(repoTsconfigDir, "tsconfig.mjs.json");
-            
+
             // Does the package allow .cts ?
             const mtsEnabled = pckgConfig.front.mts === true;
 
@@ -690,7 +682,7 @@ export class PackageManager {
             // Add dependency paths
             const references: Ts.ProjectReference[] = [];
             for (const dependency of dependencies) {
-                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/${dependency.version}/*`] = [
+                repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/*`] = [
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*")),
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", "flex", "*"))
                 ];
@@ -708,7 +700,7 @@ export class PackageManager {
                 // Add to reference list
                 references.push({ path: relPath(repoTsconfigDir, Path.join(flexPath, "tsconfig.json")) });
             }
-            
+
             await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
 
             // ASL tsconfig
@@ -740,8 +732,8 @@ export class PackageManager {
                     ],
                     references
                 };
-            
-                await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));               
+
+                await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));
             }
         }
 
@@ -750,10 +742,10 @@ export class PackageManager {
     }
 
     /** Makes the package, initializing the required tsconfigs */
-    public async make(pckg: string, version: string) {
-        const pckgInfo = await this.registry.get(pckg, version);
-        if (pckgInfo === undefined) throw new PackageNotFoundError(pckg, version);
-        
+    public async make(pckg: string) {
+        const pckgInfo = await this.registry.get(pckg);
+        if (pckgInfo === undefined) throw new PackageNotFoundError(pckg);
+
         await this._make(pckgInfo);
     }
 
@@ -761,14 +753,14 @@ export class PackageManager {
     public async watch(pckg: PackageInfo): Promise<void>
 
     /** Adds a package to watch list - automatically makes the package and builds it on changes. */
-    public async watch(pckg: string, version: string): Promise<void>
-    
-    public async watch(pckg: string | PackageInfo, version?: string) {
+    public async watch(pckg: string): Promise<void>
+
+    public async watch(pckg: string | PackageInfo) {
         let pckgInfo: string | PackageInfo | undefined = pckg;
         if (typeof pckgInfo === "string") {
             const pckgName = pckgInfo;
-            pckgInfo = await this.registry.get(pckgInfo, version!);
-            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName, version!);
+            pckgInfo = await this.registry.get(pckgInfo);
+            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName);
         }
 
         const index = this.watchList.findIndex((rootName) => rootName === pckgInfo.baseDir);
@@ -782,9 +774,9 @@ export class PackageManager {
     }
 
     /** Removes a package from the watch list */
-    public async unwatch(pckg: string, version: string) {
-        const pckgInfo = await this.registry.get(pckg, version);
-        if (pckgInfo === undefined) throw new PackageNotFoundError(pckg, version);
+    public async unwatch(pckg: string) {
+        const pckgInfo = await this.registry.get(pckg);
+        if (pckgInfo === undefined) throw new PackageNotFoundError(pckg);
 
         const index = this.watchList.findIndex((rootName) => rootName === pckgInfo.baseDir);
         if (index >= 0) {
@@ -796,19 +788,19 @@ export class PackageManager {
         }
     }
 
-    
+
     /** Builds the given package */
     public async build(pckg: PackageInfo): Promise<void>
 
     /** Builds the given package */
-    public async build(pckg: string, version: string): Promise<void>
-    
-    public async build(pckg: string | PackageInfo, version?: string) {
+    public async build(pckg: string): Promise<void>
+
+    public async build(pckg: string | PackageInfo) {
         let pckgInfo: string | PackageInfo | undefined = pckg;
         if (typeof pckgInfo === "string") {
             const pckgName = pckgInfo;
-            pckgInfo = await this.registry.get(pckgInfo, version!);
-            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName, version!);
+            pckgInfo = await this.registry.get(pckgInfo);
+            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName);
         }
 
         await this._make(pckgInfo);

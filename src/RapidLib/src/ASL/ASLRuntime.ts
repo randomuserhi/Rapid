@@ -11,7 +11,12 @@ export function setASLBaseURL(url: string | URL) {
 }
 
 const CHAR_FORWARD_SLASH = 47; /* / */
+const CHAR_BACKWARD_SLASH = 92; /* \ */
 const CHAR_DOT = 46; /* . */
+
+function isPathSeparator(code: number) {
+    return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
+}
 
 /**
  * Replicates behaviour of `path.extname`
@@ -35,7 +40,7 @@ function extname(path: string) {
     let preDotState = 0;
     for (let i = path.length - 1; i >= 0; --i) {
         const code = path.charCodeAt(i);
-        if (code === CHAR_FORWARD_SLASH) {
+        if (isPathSeparator(code)) {
             // If we reached a path separator that was not part of a set of path
             // separators at the end of the string, stop now
             if (!matchedSlash) {

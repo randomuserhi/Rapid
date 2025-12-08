@@ -8,7 +8,12 @@ import File from "fs/promises";
 import Path from "path";
 
 const CHAR_FORWARD_SLASH = 47; /* / */
+const CHAR_BACKWARD_SLASH = 92; /* \ */
 const CHAR_DOT = 46; /* . */
+
+function isPathSeparator(code: number) {
+    return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
+}
 
 /**
  * Replicates behaviour of `path.extname`
@@ -32,7 +37,7 @@ function extname(path: string) {
     let preDotState = 0;
     for (let i = path.length - 1; i >= 0; --i) {
         const code = path.charCodeAt(i);
-        if (code === CHAR_FORWARD_SLASH) {
+        if (isPathSeparator(code)) {
             // If we reached a path separator that was not part of a set of path
             // separators at the end of the string, stop now
             if (!matchedSlash) {
@@ -168,7 +173,7 @@ class ASLModule {
  * difficult to maintain.
  */
 class ASLRequestResult<T, ErrorType = any> {
-    private static OK = Symbol("ASLRequestResult.OK"); 
+    private static OK = Symbol("ASLRequestResult.OK");
 
     error: typeof ASLRequestResult<T, ErrorType>["OK"] | ErrorType;
     item: T;
@@ -221,7 +226,7 @@ interface ASLRequestWithContext<T, Context, ErrorType = any> {
 /**
  * Fetch request for module information. Used by Registry.
  */
-interface ASLModuleFetchRequest extends ASLRequestWithContext<ASLModule, ASLRegistry> { 
+interface ASLModuleFetchRequest extends ASLRequestWithContext<ASLModule, ASLRegistry> {
     mid: ASLModuleId
 }
 
@@ -314,7 +319,7 @@ class ASLRegistry {
     private cancelModuleFetchRequest(fetchRequest: ASLModuleFetchRequest, reject: (reason?: any) => void) {
         // Unbind from context
         fetchRequest.contextRef.set(Ref.NULLPTR);
-        
+
         // Remove from pending
         this.pending.delete(fetchRequest.mid);
 
@@ -399,7 +404,7 @@ class ASLRegistry {
                 // If not then the module must have been detached (unloaded from registry)
                 // and thus should not do anything.
                 if (_fetchRequest.contextRef.isNull()) return;
-                
+
                 const context = _fetchRequest.contextRef.deref();
                 context.pending.delete(mid);
             });
@@ -733,24 +738,24 @@ export class ASLEnvironment {
 
             switch (importType) {
             case ".node": {
-            // Node import
+                // Node import
 
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 return new Promise((resolve) => resolve(require(path)));
             }
             case ".cjs": {
-            // Node import
+                // Node import
 
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 return new Promise((resolve) => resolve(require(path)));
             }
             case ".mjs": {
-            // ESM import
+                // ESM import
 
                 return import(path);
             }
             case ".js": {
-            // ASL import
+                // ASL import
 
                 const mid = registry.getMid(path);
 
@@ -789,7 +794,7 @@ export class ASLEnvironment {
     private cancelModuleExecution(execution: ASLExecution, reject: (reason?: any) => void) {
         // Unbind execution context
         execution.contextRef.set(Ref.NULLPTR);
-        
+
         // Remove from pending
         this.pending.delete(execution.mid);
 
@@ -854,7 +859,7 @@ export class ASLEnvironment {
 
                         // Get execution context
                         const context = contextRef.deref();
-                        
+
                         // Assign archetype
                         context.moduleArchetype.set(mid, context.traverse(context.rootArchetype, mid));
 
@@ -954,7 +959,7 @@ export class ASLEnvironment {
      * @returns Set of modules that were unloaded
      */
     public unload(paths: string[]): Set<ASLModuleId>
-   
+
     /**
      * Unloads the given module and all modules that depend on it
      * 
@@ -962,7 +967,7 @@ export class ASLEnvironment {
      * @returns Set of modules that were unloaded
      */
     public unload(mids: ASLModuleId[]): Set<ASLModuleId>
-    
+
     public unload(list: (string | ASLModuleId)[]): Set<ASLModuleId> {
         // Resolve mids
         const mids = list.map(mid => {
