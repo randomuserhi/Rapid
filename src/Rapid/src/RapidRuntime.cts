@@ -1,8 +1,8 @@
-import Http from "http";
 import File from "fs/promises";
+import Http from "http";
 import Path from "path";
-import { PackageConfig, PackageInfo, PackageManager, PackageRegistry } from "./PackageManager.cjs";
 import { ASLEnvironment, registry } from "./ASL/ASLRuntime.cjs";
+import { PackageConfig, PackageInfo, PackageManager, PackageRegistry } from "./PackageManager.cjs";
 
 // TODO(randomuserhi): Documentation & Code cleanup
 
@@ -12,7 +12,7 @@ function createEnvironment(instance: PackageInstance, packageRegistry: PackageRe
     const env = new ASLEnvironment();
 
     // TODO(randomuserhi): Make this lib object properly, instead of just passing the instance
-    const rapid = instance;
+    const rapid = { app: instance };
 
     // environment variables
     const buildDir = Path.resolve(Path.join(pckg.baseDir, ".build"));
@@ -136,11 +136,25 @@ export class PackageInstance {
         let entryPoint = config.back?.entry;
         if (entryPoint !== undefined) {
             entryPoint = Path.join(this.pckg.baseDir, ".build", "back", entryPoint);
-            this.environment.fetch(entryPoint);
+            await this.environment.fetch(entryPoint);
         }
     }
 
     private routes = new Map<RestMethod, Map<string, Route>>();
+
+    public get(path: string, cb: (req: Http.IncomingMessage, res: Http.ServerResponse) => void) {
+        let group = this.routes.get("GET");
+        if (group === undefined) {
+            group = new Map();
+            this.routes.set("GET", group);
+        }
+
+        group.set(path, {
+            path,
+            method: "GET",
+            handler: cb
+        });
+    }
 
     public onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
         // Trigger any handlers
@@ -198,7 +212,7 @@ export class RapidRuntime {
         const pckg = decodeURI(parts[1]);
         if (pckg === "") return;
 
-        const pckgPath = `/${pckg}`;
+        const pckgPath = `${pckg}`;
 
         let instance = this.instances.get(pckgPath);
         if (instance === undefined) {

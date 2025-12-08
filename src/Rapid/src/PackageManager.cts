@@ -260,6 +260,8 @@ export class PackageManager {
 
     private watchList: string[] = [];
 
+    private host: Ts.SolutionBuilderHost<Ts.SemanticDiagnosticsBuilderProgram>;
+
     /**
      * 
      * @param registry Registry of packages
@@ -268,6 +270,39 @@ export class PackageManager {
     constructor(registry: PackageRegistry, typeDir: string) {
         this.registry = registry;
         this.typeDir = typeDir;
+
+        this.host = Ts.createSolutionBuilderHost(
+            Ts.sys,
+            Ts.createSemanticDiagnosticsBuilderProgram,
+            reportDiagnostic,
+            reportSolutionStatusChanged
+        );
+
+        // Overwrite behaviour for babel transpilation of asl files
+        const origWriteFile = this.host.writeFile;
+        this.host.writeFile = async (fileName, data, writeByteOrderMark) => {
+            const extname = Path.extname(fileName);
+            // Only handle `.js` output files and ignore `.cjs` and `.mjs`
+            switch (extname) {
+            case ".js": {
+                const babelResult = await transformAsync(data, ASLBabelConfig);
+                if (!babelResult || !babelResult.code) {
+                    // Error in transpilation, skip
+                    return;
+                }
+
+                const dir = Path.dirname(fileName);
+                if (dir !== Path.parse(dir).root) {
+                    await File.mkdir(dir, { recursive: true });
+                }
+                await File.writeFile(fileName, babelResult.code);
+            } break;
+
+            default: {
+                origWriteFile?.(fileName, data, writeByteOrderMark);
+            } break;
+            }
+        };
 
         const cleanup = () => {
             this.stopAutomaticBuilds();
@@ -325,9 +360,9 @@ export class PackageManager {
         });
     }
 
-    private async _make(pckgInfo: PackageInfo) {
+    private async _make(pckgInfo: PackageInfo, stopAutomaticBuild: boolean = true) {
         // Stop the builder
-        this.stopAutomaticBuilds();
+        if (stopAutomaticBuild) this.stopAutomaticBuilds();
 
         /**
          * Packages are made up of 3 repositories (repos):
@@ -466,6 +501,14 @@ export class PackageManager {
                     paths: {
                         "*": [
                             Path.join(relPath(repoTsconfigDir, repoDir), "*")
+                        ],
+                        "rapid": [
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "front", "rapid.d.ts")),
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "flex", "rapid.d.ts"))
+                        ],
+                        "rapid/*": [
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "front", "lib", "*")),
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "flex", "lib", "*"))
                         ]
                     }
                 }
@@ -554,6 +597,14 @@ export class PackageManager {
                     paths: {
                         "*": [
                             Path.join(relPath(repoTsconfigDir, repoDir), "*")
+                        ],
+                        "rapid": [
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "back", "rapid.d.ts")),
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "flex", "rapid.d.ts"))
+                        ],
+                        "rapid/*": [
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "back", "lib", "*")),
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "flex", "lib", "*"))
                         ]
                     }
                 }
@@ -674,6 +725,12 @@ export class PackageManager {
                     paths: {
                         "*": [
                             Path.join(relPath(repoTsconfigDir, repoDir), "*")
+                        ],
+                        "rapid": [
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "flex", "rapid.d.ts"))
+                        ],
+                        "rapid/*": [
+                            relPath(repoTsconfigDir, Path.join(this.typeDir, "rapid", "flex", "lib", "*"))
                         ]
                     }
                 }
@@ -738,7 +795,7 @@ export class PackageManager {
         }
 
         // Restart the builder
-        this.startAutomaticBuilds();
+        if (stopAutomaticBuild) this.startAutomaticBuilds();
     }
 
     /** Makes the package, initializing the required tsconfigs */
@@ -803,42 +860,13 @@ export class PackageManager {
             if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName);
         }
 
-        await this._make(pckgInfo);
+        this.stopAutomaticBuilds();
 
-        const host = Ts.createSolutionBuilderHost(
-            Ts.sys,
-            Ts.createSemanticDiagnosticsBuilderProgram,
-            reportDiagnostic,
-            reportSolutionStatusChanged
-        );
+        await this._make(pckgInfo, false);
 
-        // Overwrite behaviour for babel transpilation of asl files
-        const origWriteFile = host.writeFile;
-        host.writeFile = async (fileName, data, writeByteOrderMark) => {
-            const extname = Path.extname(fileName);
-            // Only handle `.js` output files and ignore `.cjs` and `.mjs`
-            switch (extname) {
-            case ".js": {
-                const babelResult = await transformAsync(data, ASLBabelConfig);
-                if (!babelResult || !babelResult.code) {
-                    // Error in transpilation, skip
-                    return;
-                }
-
-                const dir = Path.dirname(fileName);
-                if (dir !== Path.parse(dir).root) {
-                    await File.mkdir(dir, { recursive: true });
-                }
-                await File.writeFile(fileName, babelResult.code);
-            } break;
-
-            default: {
-                origWriteFile?.(fileName, data, writeByteOrderMark);
-            } break;
-            }
-        };
-
-        const builder = Ts.createSolutionBuilder(host, [pckgInfo.baseDir], {});
+        const builder = Ts.createSolutionBuilder(this.host, [pckgInfo.baseDir], {});
         builder.build();
+
+        this.startAutomaticBuilds();
     }
 }
