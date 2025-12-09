@@ -8,20 +8,32 @@ import { PackageConfig, PackageInfo, PackageManager, PackageRegistry } from "./P
 
 //
 
+const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
+
 function createEnvironment(instance: PackageInstance, packageRegistry: PackageRegistry, pckg: PackageInfo): ASLEnvironment {
     const env = new ASLEnvironment();
 
-    // TODO(randomuserhi): Make this lib object properly, instead of just passing the instance
-    const rapid = { app: instance };
-
-    // environment variables
+    // environment variables (TODO(randomuserhi): dir paths should be part of PackageInfo)
     const buildDir = Path.resolve(Path.join(pckg.baseDir, ".build"));
     const root = Path.join(pckg.baseDir, "back");
     const rootBuild = Path.join(pckg.baseDir, ".build", "back");
     const flex = Path.join(pckg.baseDir, "flex");
     const flexBuild = Path.join(pckg.baseDir, ".build", "flex");
 
-    const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
+    const front = Path.join(pckg.baseDir, "front");
+    const frontBuildDir = Path.join(pckg.baseDir, ".build", "front");
+
+    // TODO(randomuserhi): Make this lib object properly, instead of just passing the instance
+    const rapid = {
+        app: instance,
+        paths: {
+            front: async (...parts: string[]) => {
+                let p = Path.join(frontBuildDir, ...parts);
+                if (!await fileExists(p)) p = Path.join(front, ...parts);
+                return p;
+            }
+        }
+    };
 
     env.importHook = async (module, path) => {
         path = Path.normalize(path);
@@ -34,18 +46,40 @@ function createEnvironment(instance: PackageInstance, packageRegistry: PackageRe
 
             const fullPath = Path.resolve(Path.join(module.dir, path));
 
-            if (fullPath.startsWith(buildDir)) {
+            const inBuildDir = fullPath.startsWith(buildDir);
+            const inFlexDirectory = inBuildDir ? fullPath.startsWith(flexBuild) : fullPath.startsWith(flex);
+
+            let p: string;
+            if (inBuildDir) {
                 // If we are in build directory check non build directory
                 const relPath = Path.relative(buildDir, fullPath);
-                return Path.join(pckg.baseDir, relPath);
+                p = Path.join(pckg.baseDir, relPath);
+                if (await fileExists(p)) return p;
             } else {
                 // If we are in non build directory check build directory
                 const relPath = Path.relative(pckg.baseDir, fullPath);
-                return Path.join(buildDir, relPath);
+                p = Path.join(buildDir, relPath);
+                if (await fileExists(p)) return p;
+            }
+
+            // If we still can't find it, check flex directories
+            if (inFlexDirectory) {
+                const relPath = inBuildDir ? Path.relative(rootBuild, fullPath) : Path.relative(root, fullPath);
+
+                // Check flex build path
+                p = Path.join(flexBuild, relPath);
+                if (await fileExists(p)) return p;
+
+                // Check flex path
+                p = Path.join(flex, relPath);
+                if (await fileExists(p)) return p;
             }
         } else if (Path.extname(path) === "") {
             // For non-relative imports with no extension, just do a basic require
             // This is for standard library node modules like "path" or "file" etc...
+
+            // Since module resolution is typically handled by unix paths, convert backslash to unix style slashes
+            path = path.replace("\\", "/");
 
             // TODO(randomuserhi): cleanup
             if (path === "rapid") return rapid;
@@ -122,11 +156,25 @@ export class PackageInstance {
 
     private pckg: PackageInfo;
 
+    // TODO(randomuserhi): Move this info to PackageInfo
+    private frontDir: string;
+    private frontBuildDir: string;
+
+    // TODO(randomuserhi): Move this info to PackageInfo
+    private flexDir: string;
+    private flexBuildDir: string;
+
     private environment: ASLEnvironment;
 
     constructor(rapid: RapidRuntime, pckg: PackageInfo) {
         this.rapid = rapid;
         this.pckg = pckg;
+
+        this.frontDir = Path.join(pckg.baseDir, "front");
+        this.frontBuildDir = Path.join(pckg.baseDir, ".build", "front");
+
+        this.flexDir = Path.join(pckg.baseDir, "flex");
+        this.flexBuildDir = Path.join(pckg.baseDir, ".build", "flex");
 
         this.environment = createEnvironment(this, rapid.packageRegistry, pckg);
     }
@@ -156,7 +204,7 @@ export class PackageInstance {
         });
     }
 
-    public onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
+    public async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
         // Trigger any handlers
         const group = this.routes.get(req.method! as RestMethod);
         if (group !== undefined) {
@@ -167,9 +215,59 @@ export class PackageInstance {
             }
         }
 
-        // Otherwise return 404 not found
-        res.statusCode = 404;
-        res.end("Not Found");
+        // If no handler is found, try to find resource from "front" directory
+        let p = Path.join(this.frontBuildDir, req.url!);
+
+        if (!await fileExists(p)) {
+            p = Path.join(this.frontDir, req.url!);
+            if (!await fileExists(p)) {
+                // Check flex dir
+                p = Path.join(this.flexBuildDir, req.url!);
+                if (!await fileExists(p)) {
+                    p = Path.join(this.flexDir, req.url!);
+                }
+            }
+        }
+
+        if (!await fileExists(p)) {
+            // Otherwise return 404 not found
+            res.statusCode = 404;
+            res.end("Not Found");
+            return;
+        }
+
+        // Serve resource
+        // TODO(randomuserhi): cleanup
+        const mimeTypes = {
+            '.html': 'text/html',
+            '.js': 'text/javascript',
+            '.mjs': 'text/javascript',
+            '.css': 'text/css',
+            '.json': 'application/json',
+            '.png': 'image/png',
+            '.jpg': 'image/jpg',
+            '.gif': 'image/gif',
+            '.wav': 'audio/wav',
+            '.mp4': 'video/mp4',
+            '.woff': 'application/font-woff',
+            '.ttf': 'application/font-ttf',
+            '.eot': 'application/vnd.ms-fontobject',
+            '.otf': 'application/font-otf',
+            '.svg': 'application/image/svg+xml'
+        } as const;
+        const extname: keyof typeof mimeTypes = Path.extname(p).toLowerCase() as any;
+
+        const contentType = mimeTypes[extname] || 'application/octet-stream';
+
+        try {
+            const content = await File.readFile(p);
+            res.writeHead(200, { 'Content-Type': contentType });
+            res.end(content, 'utf-8');
+        } catch (err) {
+            res.statusCode = 500;
+            res.end("Error 500");
+            console.error(err);
+        }
     }
 }
 
@@ -184,20 +282,8 @@ export class RapidRuntime {
         this.packageRegistry = new PackageRegistry(directories);
         this.packageManager = new PackageManager(this.packageRegistry, typeDir);
 
-        // Collects built files and groups them into a single registry invalidation  
-        let collector: string[] = [];
-        let lastCollect = Date.now();
-        this.packageManager.builder.onASLTranspiled = (path) => {
-            collector.push(path);
-            lastCollect = Date.now();
-
-            setTimeout(() => {
-                const now = Date.now();
-                if (now - lastCollect > 50 && collector.length > 0) {
-                    registry.invalidate(collector);
-                    collector = [];
-                }
-            }, 100);
+        this.packageManager.builder.onASLTranspiled = async (paths) => {
+            registry.invalidate(paths);
         };
     }
 
@@ -212,7 +298,7 @@ export class RapidRuntime {
         const pckg = decodeURI(parts[1]);
         if (pckg === "") return;
 
-        const pckgPath = `${pckg}`;
+        const pckgPath = `/${pckg}`;
 
         let instance = this.instances.get(pckgPath);
         if (instance === undefined) {
@@ -220,7 +306,7 @@ export class RapidRuntime {
             if (pckgInfo === undefined) return;
 
             // Auto watch package
-            this.packageManager.watch(pckgInfo);
+            await this.packageManager.watch(pckgInfo);
 
             instance = new PackageInstance(this, pckgInfo);
             await instance.loadEntry();
@@ -228,7 +314,7 @@ export class RapidRuntime {
             this.instances.set(pckgPath, instance);
         }
 
-        req.url = req.url!.replace(pckgPath, "");
+        req.url = new URL(req.url!.replace(pckgPath, ""), "https://localhost/").pathname;
         instance.onRequest(req, res);
     }
 

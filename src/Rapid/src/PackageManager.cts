@@ -4,6 +4,7 @@ import File from "fs/promises";
 import Path from "path";
 import Ts from "typescript";
 import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
+import { PromiseResult } from "./PromiseResult.cjs";
 
 /** Helper method to get file information. Returns undefined if file does not exist. */
 async function fileStat(path: string) {
@@ -160,17 +161,36 @@ function reportSolutionStatusChanged(diagnostic: Ts.Diagnostic) {
     //console.info(Ts.formatDiagnostic(diagnostic, formatHost));
 }
 
-function reportWatchStatusChanged(diagnostic: Ts.Diagnostic) {
-    //console.info(Ts.formatDiagnostic(diagnostic, formatHost));
-}
-
 class PackageBuilder {
     private readonly host: Ts.SolutionBuilderWithWatchHost<Ts.SemanticDiagnosticsBuilderProgram> = undefined!;
     private readonly fileWatchers = new Set<Ts.FileWatcher>();
 
-    public onASLTranspiled: ((path: string) => void) | undefined;
+    public onASLTranspiled: ((files: string[]) => void) | undefined;
 
     private builder: Ts.SolutionBuilder<Ts.SemanticDiagnosticsBuilderProgram> | undefined = undefined;
+
+    // Watch Typescript build status to trigger hot reload events
+    private ASLTranspileJobs: PromiseResult<string>[] = [];
+    private reportStatusChanged(diagnostic: Ts.Diagnostic, newLine: string, options: Ts.CompilerOptions, errorCount?: number) {
+        if (diagnostic.code === 6194) {
+            if (errorCount === undefined || errorCount === 0) {
+                // Wait until transpilation finishes
+                Promise.all(this.ASLTranspileJobs).then(results => {
+                    // Collect succesfully transpiled paths
+                    const paths: string[] = [];
+                    for (const result of results) {
+                        if (result.ok()) paths.push(result.item);
+                    }
+
+                    // Trigger callback on all paths
+                    this.onASLTranspiled?.(paths);
+                });
+
+                // Clear jobs
+                this.ASLTranspileJobs = [];
+            }
+        }
+    }
 
     constructor() {
         const self = this;
@@ -193,30 +213,35 @@ class PackageBuilder {
             Ts.createSemanticDiagnosticsBuilderProgram,
             reportDiagnostic,
             reportSolutionStatusChanged,
-            reportWatchStatusChanged
+            this.reportStatusChanged.bind(this)
         );
 
         // Overwrite behaviour for babel transpilation of asl files
         const origWriteFile = this.host.writeFile;
-        this.host.writeFile = async (fileName, data, writeByteOrderMark) => {
+        this.host.writeFile = (fileName, data, writeByteOrderMark) => {
             const extname = Path.extname(fileName);
             // Only handle `.js` output files and ignore `.cjs` and `.mjs`
             switch (extname) {
             case ".js": {
-                const babelResult = await transformAsync(data, ASLBabelConfig);
-                if (!babelResult || !babelResult.code) {
-                    // Error in transpilation, skip
-                    return;
-                }
+                this.ASLTranspileJobs.push(PromiseResult<string>((resolve, reject) => {
+                    transformAsync(data, ASLBabelConfig).then(babelResult => {
+                        if (!babelResult || !babelResult.code) {
+                            // Error in transpilation, skip
+                            reject();
+                            return;
+                        }
 
-                const dir = Path.dirname(fileName);
-                if (dir !== Path.parse(dir).root) {
-                    await File.mkdir(dir, { recursive: true });
-                }
-                await File.writeFile(fileName, babelResult.code);
+                        const code = babelResult.code;
+                        const commit = () => File.writeFile(fileName, code).then(() => resolve(fileName));
 
-                // TODO(randomuserhi): Trigger hot reload hook for newly compiled file
-                this.onASLTranspiled?.(fileName);
+                        const dir = Path.dirname(fileName);
+                        if (dir !== Path.parse(dir).root) {
+                            File.mkdir(dir, { recursive: true }).then(commit).catch(reject);
+                        } else {
+                            commit().catch(reject);
+                        }
+                    });
+                }));
             } break;
 
             default: {
@@ -278,6 +303,10 @@ export class PackageManager {
             reportSolutionStatusChanged
         );
 
+        // TODO(randomuserhi): Capture transpilation jobs and wait for them to complete
+        //                     This is for the correct behaviour when performing single-builds
+        //                     Refer to .build method
+        
         // Overwrite behaviour for babel transpilation of asl files
         const origWriteFile = this.host.writeFile;
         this.host.writeFile = async (fileName, data, writeByteOrderMark) => {
@@ -845,6 +874,7 @@ export class PackageManager {
         }
     }
 
+    // TODO(randomuserhi): These promises should resolve once transpilation completes, not when typescript completes
 
     /** Builds the given package */
     public async build(pckg: PackageInfo): Promise<void>
