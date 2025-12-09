@@ -316,19 +316,35 @@ export class RapidRuntime {
         // TODO(randomuserhi): Implement redirect on basic case for "/"
         //                     User can specify what they want for the default app
 
+        // TODO(randomuserhi): Redirect "localhost:3000/pckg" links to "localhost:3000/pckg/" otherwise relative imports fail:
+        //                     <script src="./script.js"> on "localhost:3000/pckg" resolves to "localhost:3000/script.js"
+        //                     but on "localhost:3000/pckg/" it resolves to "localhost:3000/pckg/script.js" properly
+
         // Obtain package from request
         const parts = req.url!.split("/");
-        if (parts.length < 2) return;
+        if (parts.length < 2) {
+            res.statusCode = 404;
+            res.end("Not valid URL");
+            return;
+        }
 
         const pckg = decodeURI(parts[1]);
-        if (pckg === "") return;
+        if (pckg === "") {
+            res.statusCode = 404;
+            res.end("Not valid URL");
+            return;
+        }
 
         const pckgPath = `/${pckg}`;
 
         let instance = this.instances.get(pckgPath);
         if (instance === undefined) {
             const pckgInfo = await this.packageRegistry.get(pckg);
-            if (pckgInfo === undefined) return;
+            if (pckgInfo === undefined) {
+                res.statusCode = 404;
+                res.end("Not valid package");
+                return;
+            }
 
             // Auto watch package
             await this.packageManager.watch(pckgInfo);

@@ -133,7 +133,7 @@ export interface PackageConfig {
         mts?: boolean;
         entry?: string;
     };
-    dependencies?: Record<string, string>;
+    dependencies?: string[];
 }
 
 /**
@@ -429,7 +429,7 @@ export class PackageManager {
             const jobs: Promise<void>[] = [];
 
             // TODO(randomuserhi): Make dependencies an array not a k,v pair
-            for (const dependency in pckgConfig.dependencies) {
+            for (const dependency of pckgConfig.dependencies) {
                 if (dependency === pckgInfo.pckg) continue; // Skip dependency on self
 
                 jobs.push(
@@ -455,13 +455,16 @@ export class PackageManager {
         };
         // Add sub-repos as reference for typescript to build them as required
         if (pckgConfig.back !== undefined) {
-            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, "back", "tsconfig.json")) });
+            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, ".tsconfig", "back", "tsconfig.asl.json")) });
+            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, ".tsconfig", "back", "tsconfig.cjs.json")) });
+            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, ".tsconfig", "back", "tsconfig.mjs.json")) });
         }
         if (pckgConfig.front !== undefined) {
-            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, "front", "tsconfig.json")) });
+            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, ".tsconfig", "front", "tsconfig.asl.json")) });
+            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, ".tsconfig", "front", "tsconfig.mjs.json")) });
         }
         if (pckgConfig.flex !== undefined) {
-            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, "flex", "tsconfig.json")) });
+            tsconfig.references!.push({ path: relPath(pckgInfo.baseDir, Path.join(pckgInfo.baseDir, ".tsconfig", "flex", "tsconfig.asl.json")) });
         }
         await File.writeFile(tsconfigPath, JSON.stringify(tsconfig, null, 2));
 
@@ -494,14 +497,15 @@ export class PackageManager {
 
         // Generate configs for each repositories
 
-        if (pckgConfig.flex !== undefined) {
+        {
+            const createRepo = pckgConfig.flex !== undefined;
             const repo = "flex";
             const repoDir = Path.join(pckgInfo.baseDir, `${repo}`);
 
             const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
 
             // Make the directory
-            await File.mkdir(repoDir, { recursive: true });
+            if (createRepo) await File.mkdir(repoDir, { recursive: true });
             // Make config folder
             await File.mkdir(repoTsconfigDir, { recursive: true });
 
@@ -525,7 +529,7 @@ export class PackageManager {
                     { "path": relPath(repoDir, repoTsconfigASLPath) }
                 ]
             };
-            await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
+            if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
 
             // Repo config
             const repoTsconfig: TsConfig = {
@@ -562,7 +566,7 @@ export class PackageManager {
                 repoTsconfig.compilerOptions!.paths![`${dependency.pckg}/*`] = [
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*"))
                 ];
-                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, repo, "tsconfig.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", repo, "tsconfig.asl.json")) });
             }
 
             await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
@@ -582,14 +586,15 @@ export class PackageManager {
             await File.writeFile(repoTsconfigASLPath, JSON.stringify(repoTsconfigASL, null, 2));
         }
 
-        if (pckgConfig.back !== undefined) {
+        {
+            const createRepo = pckgConfig.back !== undefined;
             const repo = "back";
             const repoDir = Path.join(pckgInfo.baseDir, `${repo}`);
 
             const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
 
             // Make the directory
-            await File.mkdir(repoDir, { recursive: true });
+            if (createRepo) await File.mkdir(repoDir, { recursive: true });
             // Make config folder
             await File.mkdir(repoTsconfigDir, { recursive: true });
 
@@ -602,9 +607,7 @@ export class PackageManager {
             const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
             const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
             const repoTsconfigCtsPath = Path.join(repoTsconfigDir, "tsconfig.cjs.json");
-
-            // Does the package allow .cts ?
-            const ctsEnabled = pckgConfig.back.cts === true;
+            const repoTsconfigMtsPath = Path.join(repoTsconfigDir, "tsconfig.mjs.json");
 
             // Root tsconfig
             const repoTsconfigRoot: TsConfig = {
@@ -614,13 +617,12 @@ export class PackageManager {
                     tsBuildInfoFile: Path.join(relPath(repoDir, buildDir), `.${repo}.tsbuildinfo`)
                 },
                 references: [
-                    { "path": relPath(repoDir, repoTsconfigASLPath) }
+                    { "path": relPath(repoDir, repoTsconfigASLPath) },
+                    { "path": relPath(repoDir, repoTsconfigCtsPath) },
+                    { "path": relPath(repoDir, repoTsconfigMtsPath) }
                 ]
             };
-            if (ctsEnabled) {
-                repoTsconfigRoot.references!.push({ "path": relPath(repoDir, repoTsconfigCtsPath) });
-            }
-            await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
+            if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
 
             // Repo config
             const repoTsconfig: TsConfig = {
@@ -659,20 +661,15 @@ export class PackageManager {
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*")),
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", "flex", "*"))
                 ];
-                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, repo, "tsconfig.json")) });
-                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, "flex", "tsconfig.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", repo, "tsconfig.asl.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", repo, "tsconfig.mjs.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", repo, "tsconfig.cjs.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", "flex", "tsconfig.asl.json")) });
             }
 
-            // Add flex folder as dependency if it is enabled
-            if (pckgConfig.flex !== undefined) {
-                const flexPath = Path.join(pckgInfo.baseDir, "flex");
-
-                // Add to main config
-                repoTsconfig.compilerOptions!.paths!["*"].push(Path.join(relPath(repoTsconfigDir, flexPath), "*"));
-
-                // Add to reference list
-                references.push({ path: relPath(repoTsconfigDir, Path.join(flexPath, "tsconfig.json")) });
-            }
+            // Add flex folder as dependency
+            repoTsconfig.compilerOptions!.paths!["*"].push(Path.join(relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, "flex")), "*"));
+            references.push({ path: relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, ".tsconfig", "flex", "tsconfig.asl.json")) });
 
             await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
 
@@ -691,34 +688,50 @@ export class PackageManager {
             };
             await File.writeFile(repoTsconfigASLPath, JSON.stringify(repoTsconfigASL, null, 2));
 
-            if (ctsEnabled) {
-                // CTS tsconfig
-                const repoTsconfigCts: TsConfig = {
-                    extends: relPath(repoTsconfigDir, repoTsconfigPath),
-                    compilerOptions: {
-                        module: Ts.ModuleKind[Ts.ModuleKind.NodeNext] as any,
-                        moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext] as any,
-                        tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".cts.tsbuildinfo")),
-                    },
-                    include: [
-                        Path.join(relPath(repoTsconfigDir, repoDir), "**/*.cts"),
-                        Path.join(relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, "flex")), "**/*.cts")
-                    ],
-                    references
-                };
+            // CTS tsconfig
+            const repoTsconfigCts: TsConfig = {
+                extends: relPath(repoTsconfigDir, repoTsconfigPath),
+                compilerOptions: {
+                    module: Ts.ModuleKind[Ts.ModuleKind.NodeNext] as any,
+                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext] as any,
+                    tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".cjs.tsbuildinfo")),
+                },
+                include: [
+                    Path.join(relPath(repoTsconfigDir, repoDir), "**/*.cts"),
+                    Path.join(relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, "flex")), "**/*.cts")
+                ],
+                references
+            };
 
-                await File.writeFile(repoTsconfigCtsPath, JSON.stringify(repoTsconfigCts, null, 2));
-            }
+            await File.writeFile(repoTsconfigCtsPath, JSON.stringify(repoTsconfigCts, null, 2));
+
+            // MTS tsconfig
+            const repoTsconfigMts: TsConfig = {
+                extends: relPath(repoTsconfigDir, repoTsconfigPath),
+                compilerOptions: {
+                    module: Ts.ModuleKind[Ts.ModuleKind.NodeNext] as any,
+                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext] as any,
+                    tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".mjs.tsbuildinfo")),
+                },
+                include: [
+                    Path.join(relPath(repoTsconfigDir, repoDir), "**/*.mts"),
+                    Path.join(relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, "flex")), "**/*.cts")
+                ],
+                references
+            };
+
+            await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));
         }
 
-        if (pckgConfig.front !== undefined) {
+        {
+            const createRepo = pckgConfig.front !== undefined;
             const repo = "front";
             const repoDir = Path.join(pckgInfo.baseDir, `${repo}`);
 
             const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
 
             // Make the directory
-            await File.mkdir(repoDir, { recursive: true });
+            if (createRepo) await File.mkdir(repoDir, { recursive: true });
             // Make config folder
             await File.mkdir(repoTsconfigDir, { recursive: true });
 
@@ -732,9 +745,6 @@ export class PackageManager {
             const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
             const repoTsconfigMtsPath = Path.join(repoTsconfigDir, "tsconfig.mjs.json");
 
-            // Does the package allow .cts ?
-            const mtsEnabled = pckgConfig.front.mts === true;
-
             // Root tsconfig
             const repoTsconfigRoot: TsConfig = {
                 files: [],
@@ -743,13 +753,11 @@ export class PackageManager {
                     tsBuildInfoFile: Path.join(relPath(repoDir, buildDir), `.${repo}.tsbuildinfo`)
                 },
                 references: [
-                    { "path": relPath(repoDir, repoTsconfigASLPath) }
+                    { "path": relPath(repoDir, repoTsconfigASLPath) },
+                    { "path": relPath(repoDir, repoTsconfigMtsPath) }
                 ]
             };
-            if (mtsEnabled) {
-                repoTsconfigRoot.references!.push({ "path": relPath(repoDir, repoTsconfigMtsPath) });
-            }
-            await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
+            if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
 
             // Repo config
             const repoTsconfig: TsConfig = {
@@ -785,20 +793,14 @@ export class PackageManager {
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", repo, "*")),
                     relPath(repoTsconfigDir, Path.join(dependency.baseDir, "@types", "flex", "*"))
                 ];
-                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, repo, "tsconfig.json")) });
-                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, "flex", "tsconfig.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", repo, "tsconfig.asl.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", repo, "tsconfig.mjs.json")) });
+                references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.baseDir, ".tsconfig", "flex", "tsconfig.asl.json")) });
             }
 
-            // Add flex folder as dependency if it is enabled
-            if (pckgConfig.flex !== undefined) {
-                const flexPath = Path.join(pckgInfo.baseDir, "flex");
-
-                // Add to main config
-                repoTsconfig.compilerOptions!.paths!["*"].push(Path.join(relPath(repoTsconfigDir, flexPath), "*"));
-
-                // Add to reference list
-                references.push({ path: relPath(repoTsconfigDir, Path.join(flexPath, "tsconfig.json")) });
-            }
+            // Add flex folder as dependency
+            repoTsconfig.compilerOptions!.paths!["*"].push(Path.join(relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, "flex")), "*"));
+            references.push({ path: relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, ".tsconfig", "flex", "tsconfig.asl.json")) });
 
             await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
 
@@ -817,23 +819,21 @@ export class PackageManager {
             };
             await File.writeFile(repoTsconfigASLPath, JSON.stringify(repoTsconfigASL, null, 2));
 
-            if (mtsEnabled) {
-                // CTS tsconfig
-                const repoTsconfigMts: TsConfig = {
-                    extends: relPath(repoTsconfigDir, repoTsconfigPath),
-                    compilerOptions: {
-                        module: Ts.ModuleKind[Ts.ModuleKind.ES2022] as any,
-                        tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".mts.tsbuildinfo")),
-                    },
-                    include: [
-                        Path.join(relPath(repoTsconfigDir, repoDir), "**/*.mts"),
-                        Path.join(relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, "flex")), "**/*.mts")
-                    ],
-                    references
-                };
+            // MTS tsconfig
+            const repoTsconfigMts: TsConfig = {
+                extends: relPath(repoTsconfigDir, repoTsconfigPath),
+                compilerOptions: {
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022] as any,
+                    tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".mjs.tsbuildinfo")),
+                },
+                include: [
+                    Path.join(relPath(repoTsconfigDir, repoDir), "**/*.mts"),
+                    Path.join(relPath(repoTsconfigDir, Path.join(pckgInfo.baseDir, "flex")), "**/*.mts")
+                ],
+                references
+            };
 
-                await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));
-            }
+            await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));
         }
 
         // Restart the builder
