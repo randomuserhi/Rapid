@@ -29,7 +29,7 @@ function createEnvironment(instance: PackageInstance, packageRegistry: PackageRe
     const rapid = {
         app: instance,
         paths: {
-            front: (...parts: string[]) => {
+            frontSync: (...parts: string[]) => {
                 let p = Path.join(frontBuild, ...parts);
 
                 if (fileExistsSync(p)) return p;
@@ -40,6 +40,20 @@ function createEnvironment(instance: PackageInstance, packageRegistry: PackageRe
                 if (fileExistsSync(p)) return p;
                 p = Path.join(flex, ...parts);
                 if (fileExistsSync(p)) return p;
+
+                throw new Error("Resource does not exist");
+            },
+            front: async (...parts: string[]) => {
+                let p = Path.join(frontBuild, ...parts);
+
+                if (await fileExists(p)) return p;
+                p = Path.join(front, ...parts);
+                if (await fileExists(p)) return p;
+
+                p = Path.join(flexBuild, ...parts);
+                if (await fileExists(p)) return p;
+                p = Path.join(flex, ...parts);
+                if (await fileExists(p)) return p;
 
                 throw new Error("Resource does not exist");
             }

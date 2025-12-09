@@ -166,6 +166,10 @@ class PackageBuilder {
     private readonly fileWatchers = new Set<Ts.FileWatcher>();
 
     public onASLTranspiled: ((files: string[]) => void) | undefined;
+
+    // Used to resolve `start()` promise so that it completes once first build is ready
+    // This is such that systems can properly wait for ASL scripts to be ready before loading entry point
+    // Without this, the typescript files are built, but ASL has not transpiled all files yet
     private resolve?: () => void;
 
     private builder: Ts.SolutionBuilder<Ts.SemanticDiagnosticsBuilderProgram> | undefined = undefined;
