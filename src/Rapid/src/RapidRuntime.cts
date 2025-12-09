@@ -1,4 +1,5 @@
 import File from "fs/promises";
+import FileSync from "fs";
 import Http from "http";
 import Path from "path";
 import { ASLEnvironment, registry } from "./ASL/ASLRuntime.cjs";
@@ -9,6 +10,7 @@ import { PackageConfig, PackageInfo, PackageManager, PackageRegistry } from "./P
 //
 
 const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
+const fileExistsSync = (path: string) => FileSync.existsSync(path);
 
 function createEnvironment(instance: PackageInstance, packageRegistry: PackageRegistry, pckg: PackageInfo): ASLEnvironment {
     const env = new ASLEnvironment();
@@ -21,16 +23,25 @@ function createEnvironment(instance: PackageInstance, packageRegistry: PackageRe
     const flexBuild = Path.join(pckg.baseDir, ".build", "flex");
 
     const front = Path.join(pckg.baseDir, "front");
-    const frontBuildDir = Path.join(pckg.baseDir, ".build", "front");
+    const frontBuild = Path.join(pckg.baseDir, ".build", "front");
 
     // TODO(randomuserhi): Make this lib object properly, instead of just passing the instance
     const rapid = {
         app: instance,
         paths: {
-            front: async (...parts: string[]) => {
-                let p = Path.join(frontBuildDir, ...parts);
-                if (!await fileExists(p)) p = Path.join(front, ...parts);
-                return p;
+            front: (...parts: string[]) => {
+                let p = Path.join(frontBuild, ...parts);
+
+                if (fileExistsSync(p)) return p;
+                p = Path.join(front, ...parts);
+                if (fileExistsSync(p)) return p;
+
+                p = Path.join(flexBuild, ...parts);
+                if (fileExistsSync(p)) return p;
+                p = Path.join(flex, ...parts);
+                if (fileExistsSync(p)) return p;
+
+                throw new Error("Resource does not exist");
             }
         }
     };

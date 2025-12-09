@@ -166,6 +166,7 @@ class PackageBuilder {
     private readonly fileWatchers = new Set<Ts.FileWatcher>();
 
     public onASLTranspiled: ((files: string[]) => void) | undefined;
+    private resolve?: () => void;
 
     private builder: Ts.SolutionBuilder<Ts.SemanticDiagnosticsBuilderProgram> | undefined = undefined;
 
@@ -184,6 +185,10 @@ class PackageBuilder {
 
                     // Trigger callback on all paths
                     this.onASLTranspiled?.(paths);
+
+                    // Signal end of build
+                    this.resolve?.();
+                    this.resolve = undefined;
                 });
 
                 // Clear jobs
@@ -251,12 +256,16 @@ class PackageBuilder {
         };
     }
 
-    public start(rootNames: readonly string[]) {
-        if (rootNames.length === 0) return;
+    public start(rootNames: readonly string[]): Promise<void> {
+        return new Promise((resolve) => {
+            if (rootNames.length === 0) resolve();
 
-        // Start the typescript compiler
-        this.builder = Ts.createSolutionBuilderWithWatch(this.host, rootNames, {});
-        this.builder.build();
+            // Start the typescript compiler
+            this.builder = Ts.createSolutionBuilderWithWatch(this.host, rootNames, {});
+            this.builder.build();
+
+            this.resolve = resolve;
+        });
     }
 
     public stop() {
@@ -306,7 +315,7 @@ export class PackageManager {
         // TODO(randomuserhi): Capture transpilation jobs and wait for them to complete
         //                     This is for the correct behaviour when performing single-builds
         //                     Refer to .build method
-        
+
         // Overwrite behaviour for babel transpilation of asl files
         const origWriteFile = this.host.writeFile;
         this.host.writeFile = async (fileName, data, writeByteOrderMark) => {
@@ -370,9 +379,9 @@ export class PackageManager {
         this.configWatcher = undefined;
     }
 
-    private startAutomaticBuilds() {
+    private async startAutomaticBuilds() {
         if (this.watchList.length === 0) return;
-        this.builder.start(this.watchList);
+        await this.builder.start(this.watchList);
 
         this.configWatcher = Chokidar.watch(this.watchList.map(p => Path.join(p, RAPID_CONFIG_NAME)), {
             ignoreInitial: true
@@ -855,7 +864,7 @@ export class PackageManager {
 
             this.watchList.push(pckgInfo.baseDir);
 
-            this.startAutomaticBuilds();
+            await this.startAutomaticBuilds();
         }
     }
 
@@ -870,7 +879,7 @@ export class PackageManager {
 
             this.watchList.splice(index, 1);
 
-            this.startAutomaticBuilds();
+            await this.startAutomaticBuilds();
         }
     }
 
@@ -897,6 +906,6 @@ export class PackageManager {
         const builder = Ts.createSolutionBuilder(this.host, [pckgInfo.baseDir], {});
         builder.build();
 
-        this.startAutomaticBuilds();
+        await this.startAutomaticBuilds();
     }
 }
