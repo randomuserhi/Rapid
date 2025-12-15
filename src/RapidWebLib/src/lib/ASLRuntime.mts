@@ -26,7 +26,7 @@ function isPathSeparator(code: number) {
  * @param path Path
  * @returns File extension
  */
-function extname(path: string) {
+export function extname(path: string) {
     if (typeof path !== "string") {
         throw new TypeError(`The "path" argument must be of type string. Received type ${typeof path}`);
     }
@@ -115,7 +115,7 @@ type ASLModuleId = number;
 /**
  * Module object, represents exports for a module.
  */
-type ASLModuleObject = Record<PropertyKey, any>;
+export type ASLModuleObject = Record<PropertyKey, any>;
 
 /** Function that imports another module from an ASL module execution context. */
 type ASLEnvImportFunc = (module: ASLModule, path: string, options?: ASLImportOptions) => Promise<ASLModuleObject>;
@@ -145,7 +145,7 @@ interface ASLImportOptions {
  * 
  * Contains information about the module, such as its archetype and execution function.
  */
-class ASLModule {
+export class ASLModule {
     /** Module path (normalized) */
     readonly path: string;
 
@@ -580,11 +580,11 @@ class ASLArchetype {
     }
 }
 
-const defaultImportHook = async (module: ASLModule, path: string) => {
+export const defaultImportHook = async (module: ASLModule, path: string) => {
     return new URL(path, path.startsWith(".") ? module.path : ASL_BASE_URL).toString();
 };
 
-const defaultErrorHook = (mid: ASLModuleId, error?: any) => {
+export const defaultErrorHook = (mid: ASLModuleId, error?: any) => {
     console.error(`${registry.getPath(mid)}:`, error);
 };
 
@@ -594,6 +594,12 @@ interface ASLExecution extends ASLRequestWithContext<ASLModuleObject, ASLEnviron
     mid: ASLModuleId;
     requesters: Set<ASLModuleId>;
 }
+
+/** Function called on import */
+export type ASLImportHook = (module: ASLModule, path: string, options?: ASLImportOptions) => Promise<string | ASLModuleObject>;
+
+/** Function called on error */
+export type ASLErrorHook = (mid: ASLModuleId, error?: any) => void;
 
 /**
  * ASL Environment.
@@ -631,12 +637,12 @@ export class ASLEnvironment {
     /**
      * Import hook that the user can define to transform paths before they are used
      */
-    public importHook: (module: ASLModule, path: string, options?: ASLImportOptions) => Promise<string | ASLModuleObject> = defaultImportHook;
+    public importHook: ASLImportHook = defaultImportHook;
 
     /**
      * Error hook that the user can define to handle module errors
      */
-    public errorHook: (mid: ASLModuleId, error?: any) => void = defaultErrorHook;
+    public errorHook: ASLErrorHook = defaultErrorHook;
 
     constructor() {
         // Register root archetype
@@ -706,9 +712,11 @@ export class ASLEnvironment {
      * Import function used by executing modules when they are executed to import other modules into
      * the given environment.
      * 
-     * @param promise The execution promise for the module (used to detect cancellation)
-     * @param path File path to module
+     * @param contextRef The execution context for the given module
+     * @param module The module making the import
+     * @param path File path to module being imported
      * @param options Import options
+     * @returns Promise that resolves to the module's exports
      */
     private import(contextRef: ASLExecutionContext, module: ASLModule, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {  
         // Create default options

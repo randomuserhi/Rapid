@@ -7,13 +7,12 @@
         "outDir": "./build",
         "tsBuildInfoFile": "./build/.tsbuildinfo",
         "paths": {
-            "*": [
-                "./src/*"
+            "/rapid/*": [
+                "./src/lib/*"
             ]
-            // path fixes...
         }
     },
     "include": [
-        "./src/**/*.ts"
+        "./src/**/*.mts"
     ]
 }

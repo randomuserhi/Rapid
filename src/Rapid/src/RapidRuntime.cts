@@ -1,103 +1,166 @@
-import File from "fs/promises";
 import FileSync from "fs";
+import File from "fs/promises";
 import Http from "http";
+import OS from "os";
 import Path from "path";
-import { ASLEnvironment, registry } from "./ASL/ASLRuntime.cjs";
-import { PackageConfig, PackageInfo, PackageManager, PackageRegistry } from "./PackageManager.cjs";
+import { ASLEnvironment, ASLModule, ASLModuleObject, registry } from "./ASL/ASLRuntime.cjs";
+import { PackageBuilder, PackageConfig, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 
-// TODO(randomuserhi): Documentation & Code cleanup
+/** Probes the file system to determine if it is case sensitive or not */
+function isFileSystemCaseSensitive() {
+    const tmpDir = FileSync.mkdtempSync(Path.join(OS.tmpdir(), "case-test-"));
+    const fileA = Path.join(tmpDir, "TestFile");
+    const fileB = Path.join(tmpDir, "testfile");
 
-//
+    FileSync.writeFileSync(fileA, "x");
+
+    const caseSensitive = !FileSync.existsSync(fileB);
+
+    FileSync.rmSync(tmpDir, { recursive: true, force: true });
+    return caseSensitive;
+}
+
+/** Flag for if file system is case sensitive or not */
+const CASE_SENSITIVE_FS = isFileSystemCaseSensitive();
 
 const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
-const fileExistsSync = (path: string) => FileSync.existsSync(path);
 
-function createEnvironment(instance: PackageInstance, packageRegistry: PackageRegistry, pckg: PackageInfo): ASLEnvironment {
-    const env = new ASLEnvironment();
+/**  */
+type RestMethod = "GET" | "POST";
 
-    // environment variables (TODO(randomuserhi): dir paths should be part of PackageInfo)
-    const buildDir = Path.resolve(Path.join(pckg.baseDir, ".build"));
-    const root = Path.join(pckg.baseDir, "back");
-    const rootBuild = Path.join(pckg.baseDir, ".build", "back");
-    const flex = Path.join(pckg.baseDir, "flex");
-    const flexBuild = Path.join(pckg.baseDir, ".build", "flex");
+/**  */
+interface Route {
+    path: string;
+    method: RestMethod;
+    handler: (req: Http.IncomingMessage, res: Http.ServerResponse) => void;
+}
 
-    const front = Path.join(pckg.baseDir, "front");
-    const frontBuild = Path.join(pckg.baseDir, ".build", "front");
+/**  */
+const mimeTypes = {
+    '.html': 'text/html',
+    '.js': 'text/javascript',
+    '.mjs': 'text/javascript',
+    '.css': 'text/css',
+    '.json': 'application/json',
+    '.png': 'image/png',
+    '.jpg': 'image/jpg',
+    '.gif': 'image/gif',
+    '.wav': 'audio/wav',
+    '.mp4': 'video/mp4',
+    '.woff': 'application/font-woff',
+    '.ttf': 'application/font-ttf',
+    '.eot': 'application/vnd.ms-fontobject',
+    '.otf': 'application/font-otf',
+    '.svg': 'application/image/svg+xml'
+} as const;
 
-    // TODO(randomuserhi): Make this lib object properly, instead of just passing the instance
-    const rapid = {
-        app: instance,
-        paths: {
-            frontSync: (...parts: string[]) => {
-                let p = Path.join(frontBuild, ...parts);
+class RapidLib {
+    /** Package */
+    private readonly app: RapidApp;
 
-                if (fileExistsSync(p)) return p;
-                p = Path.join(front, ...parts);
-                if (fileExistsSync(p)) return p;
+    private cache = new Map<string, ASLModuleObject>();
 
-                p = Path.join(flexBuild, ...parts);
-                if (fileExistsSync(p)) return p;
-                p = Path.join(flex, ...parts);
-                if (fileExistsSync(p)) return p;
+    constructor(app: RapidApp) {
+        this.app = app;
+    }
 
-                throw new Error("Resource does not exist");
-            },
-            front: async (...parts: string[]) => {
-                let p = Path.join(frontBuild, ...parts);
-
-                if (await fileExists(p)) return p;
-                p = Path.join(front, ...parts);
-                if (await fileExists(p)) return p;
-
-                p = Path.join(flexBuild, ...parts);
-                if (await fileExists(p)) return p;
-                p = Path.join(flex, ...parts);
-                if (await fileExists(p)) return p;
-
-                throw new Error("Resource does not exist");
+    public resolve(path: string): ASLModuleObject {
+        let obj = this.cache.get(path);
+        if (obj === undefined) {
+            if (path === "rapid") {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                obj = require("./RapidLib/rapid.cjs").link(this.app);
+            } else {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                obj = require(`.${Path.sep}${Path.join("RapidLib/lib", `${Path.relative("rapid", path)}.cjs`)}`).link(this.app);
             }
         }
-    };
 
-    env.importHook = async (module, path) => {
+        if (obj === undefined) throw new Error(`Could not find: ${path}`);
+        return obj;
+    }
+}
+
+/** A single app instance that represents a package */
+export class RapidApp {
+    /** The runtime this app is part of */
+    private readonly runtime: RapidRuntime;
+
+    /** Package */
+    public readonly pckgInfo: PackageInfo;
+
+    /** ASL environment of the app */
+    private readonly environment: ASLEnvironment;
+
+    /** Routes that are used to resolve certain URL paths */
+    public readonly routes = new Map<RestMethod, Map<string, Route>>();
+
+    /** RapidLib object */
+    private rapidLib: RapidLib;
+
+    constructor(runtime: RapidRuntime, pckgInfo: PackageInfo) {
+        this.runtime = runtime;
+        this.pckgInfo = pckgInfo;
+
+        // Create rapid lib object
+        this.rapidLib = new RapidLib(this);
+
+        // Initialize ASL environment
+        this.environment = new ASLEnvironment();
+        this.environment.importHook = this.aslImportHook.bind(this);
+    }
+
+    /** Import hook to resolve ASL environment paths */
+    private async aslImportHook(module: ASLModule, path: string): Promise<string | ASLModuleObject> {
         path = Path.normalize(path);
 
+        const {
+            baseDir,
+            buildDir,
+            backDir,
+            backBuildDir,
+            flexBuildDir,
+            flexDir
+        } = this.pckgInfo;
+
         if (path.startsWith(".")) {
-            // relative import
+            // Handle relative import
 
-            // Check if it is really relative
-            if (await fileExists(path)) return path;
-
+            // Construct the full path given the module path
             const fullPath = Path.resolve(Path.join(module.dir, path));
 
-            const inBuildDir = fullPath.startsWith(buildDir);
-            const inFlexDirectory = inBuildDir ? fullPath.startsWith(flexBuild) : fullPath.startsWith(flex);
+            // If it exists, return the path
+            if (await fileExists(fullPath)) return fullPath;
 
-            let p: string;
+            let resolvedPath: string;
+            
+            // Otherwise, resolve the path by checking build / non-build directory paths
+            // depending on which we started in
+            const inBuildDir = fullPath.startsWith(buildDir);
             if (inBuildDir) {
                 // If we are in build directory check non build directory
                 const relPath = Path.relative(buildDir, fullPath);
-                p = Path.join(pckg.baseDir, relPath);
-                if (await fileExists(p)) return p;
+                resolvedPath = Path.join(baseDir, relPath);
+                if (await fileExists(resolvedPath)) return resolvedPath;
             } else {
                 // If we are in non build directory check build directory
-                const relPath = Path.relative(pckg.baseDir, fullPath);
-                p = Path.join(buildDir, relPath);
-                if (await fileExists(p)) return p;
+                const relPath = Path.relative(baseDir, fullPath);
+                resolvedPath = Path.join(buildDir, relPath);
+                if (await fileExists(resolvedPath)) return resolvedPath;
             }
 
             // If we still can't find it, check flex directories
+            const inFlexDirectory = inBuildDir ? fullPath.startsWith(flexBuildDir): fullPath.startsWith(flexDir);
             if (inFlexDirectory) {
-                const relPath = inBuildDir ? Path.relative(rootBuild, fullPath) : Path.relative(root, fullPath);
+                const relPath = inBuildDir ? Path.relative(backBuildDir, fullPath) : Path.relative(backDir, fullPath);
 
                 // Check flex build path
-                p = Path.join(flexBuild, relPath);
-                if (await fileExists(p)) return p;
+                resolvedPath = Path.join(flexBuildDir, relPath);
+                if (await fileExists(resolvedPath)) return resolvedPath;
 
                 // Check flex path
-                p = Path.join(flex, relPath);
-                if (await fileExists(p)) return p;
+                resolvedPath = Path.join(flexDir, relPath);
+                if (await fileExists(resolvedPath)) return resolvedPath;
             }
         } else if (Path.extname(path) === "") {
             // For non-relative imports with no extension, just do a basic require
@@ -106,129 +169,80 @@ function createEnvironment(instance: PackageInstance, packageRegistry: PackageRe
             // Since module resolution is typically handled by unix paths, convert backslash to unix style slashes
             path = path.replace("\\", "/");
 
-            // TODO(randomuserhi): cleanup
-            if (path === "rapid") return rapid;
+            // Resolve rapidlib paths:
+            if (path.startsWith("rapid")) {
+                return this.rapidLib.resolve(path);
+            }
 
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             return require(path);
         } else {
-            // Check if it is in root build folder first
-            let p = Path.join(rootBuild, path);
-            if (await fileExists(p)) return p;
+            // Resolve absolute paths
+
+            // Check if it is in build folder first
+            let resolvedPath = Path.join(backBuildDir, path);
+            if (await fileExists(resolvedPath)) return resolvedPath;
+
+            // Otherwise check base folder
+            resolvedPath = Path.join(backDir, path);
+            if (await fileExists(resolvedPath)) return resolvedPath;
 
             // Otherwise check flex build folder
-            p = Path.join(flexBuild, path);
-            if (await fileExists(p)) return p;
-
-            // Otherwise check root folder
-            p = Path.join(root, path);
-            if (await fileExists(p)) return p;
+            resolvedPath = Path.join(flexBuildDir, path);
+            if (await fileExists(resolvedPath)) return resolvedPath;
 
             // Otherwise check flex folder
-            p = Path.join(flex, path);
-            if (await fileExists(p)) return p;
+            resolvedPath = Path.join(flexDir, path);
+            if (await fileExists(resolvedPath)) return resolvedPath;
 
-            // Check package path
+            // Check package path (if it is a dependency import)
             const parts = path.split(Path.sep);
-            const pckg = parts[0];
-            const version = parts[1];
+            const pckgName = parts[0];
 
-            const pckgInfo = await packageRegistry.get(pckg);
+            const pckgInfo = await this.runtime.packageRegistry.get(pckgName);
             if (pckgInfo !== undefined) {
-                const pckgRoot = Path.join(pckgInfo.baseDir, "back");
-                const pckgRootBuild = Path.join(pckgInfo.baseDir, ".build", "back");
-                const pckgFlex = Path.join(pckgInfo.baseDir, "flex");
-                const pckgFlexBuild = Path.join(pckgInfo.baseDir, ".build", "flex");
+                const { 
+                    backDir,
+                    backBuildDir,
+                    flexDir,
+                    flexBuildDir
+                } = pckgInfo;
 
-                path = Path.relative(Path.join(pckg, version), path);
+                // Trim the package name from the path
+                path = Path.relative(pckgName, path);
 
-                // Check if it is in root build folder first
-                p = Path.join(pckgRootBuild, path);
-                if (await fileExists(p)) return p;
+                // Check if it is in build folder first
+                let resolvedPath = Path.join(backBuildDir, path);
+                if (await fileExists(resolvedPath)) return resolvedPath;
+
+                // Otherwise check base folder
+                resolvedPath = Path.join(backDir, path);
+                if (await fileExists(resolvedPath)) return resolvedPath;
 
                 // Otherwise check flex build folder
-                p = Path.join(pckgFlexBuild, path);
-                if (await fileExists(p)) return p;
-
-                // Otherwise check root folder
-                p = Path.join(pckgRoot, path);
-                if (await fileExists(p)) return p;
+                resolvedPath = Path.join(flexBuildDir, path);
+                if (await fileExists(resolvedPath)) return resolvedPath;
 
                 // Otherwise check flex folder
-                p = Path.join(pckgFlex, path);
-                if (await fileExists(p)) return p;
+                resolvedPath = Path.join(flexDir, path);
+                if (await fileExists(resolvedPath)) return resolvedPath;
             }
         }
 
         throw new Error(`Could not find: ${path}`);
-    };
-
-    return env;
-}
-
-//
-
-type RestMethod = "GET" | "POST";
-
-interface Route {
-    path: string;
-    method: RestMethod;
-    handler: (req: Http.IncomingMessage, res: Http.ServerResponse) => void;
-}
-
-export class PackageInstance {
-    private rapid: RapidRuntime;
-
-    private pckg: PackageInfo;
-
-    // TODO(randomuserhi): Move this info to PackageInfo
-    private frontDir: string;
-    private frontBuildDir: string;
-
-    // TODO(randomuserhi): Move this info to PackageInfo
-    private flexDir: string;
-    private flexBuildDir: string;
-
-    private environment: ASLEnvironment;
-
-    constructor(rapid: RapidRuntime, pckg: PackageInfo) {
-        this.rapid = rapid;
-        this.pckg = pckg;
-
-        this.frontDir = Path.join(pckg.baseDir, "front");
-        this.frontBuildDir = Path.join(pckg.baseDir, ".build", "front");
-
-        this.flexDir = Path.join(pckg.baseDir, "flex");
-        this.flexBuildDir = Path.join(pckg.baseDir, ".build", "flex");
-
-        this.environment = createEnvironment(this, rapid.packageRegistry, pckg);
     }
 
+    /** Loads and runs the package's entry point */
     public async loadEntry() {
-        const config: PackageConfig = JSON.parse(await File.readFile(this.pckg.configPath, "utf-8"));
+        const config: PackageConfig = JSON.parse(await File.readFile(this.pckgInfo.configPath, "utf-8"));
         let entryPoint = config.back?.entry;
         if (entryPoint !== undefined) {
-            entryPoint = Path.join(this.pckg.baseDir, ".build", "back", entryPoint);
+            entryPoint = Path.join(this.pckgInfo.baseDir, ".build", "back", entryPoint);
             await this.environment.fetch(entryPoint);
         }
     }
 
-    private routes = new Map<RestMethod, Map<string, Route>>();
-
-    public get(path: string, cb: (req: Http.IncomingMessage, res: Http.ServerResponse) => void) {
-        let group = this.routes.get("GET");
-        if (group === undefined) {
-            group = new Map();
-            this.routes.set("GET", group);
-        }
-
-        group.set(path, {
-            path,
-            method: "GET",
-            handler: cb
-        });
-    }
-
+    /** Handle requests for the given App */
     public async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
         // Trigger any handlers
         const group = this.routes.get(req.method! as RestMethod);
@@ -239,75 +253,73 @@ export class PackageInstance {
                 return;
             }
         }
-
+    
         // If no handler is found, try to find resource from "front" directory
-        let p = Path.join(this.frontBuildDir, req.url!);
-
-        if (!await fileExists(p)) {
-            p = Path.join(this.frontDir, req.url!);
-            if (!await fileExists(p)) {
-                // Check flex dir
-                p = Path.join(this.flexBuildDir, req.url!);
-                if (!await fileExists(p)) {
-                    p = Path.join(this.flexDir, req.url!);
+        let resourcePath = Path.join(this.pckgInfo.frontBuildDir, req.url!);
+        if (!await fileExists(resourcePath)) {
+            // If its not in the build directory, check base directory
+            resourcePath = Path.join(this.pckgInfo.frontDir, req.url!);
+            if (!await fileExists(resourcePath)) {
+                // Otherwise check flex directories
+                resourcePath = Path.join(this.pckgInfo.flexBuildDir, req.url!);
+                if (!await fileExists(resourcePath)) {
+                    resourcePath = Path.join(this.pckgInfo.flexDir, req.url!);
                 }
             }
         }
-
-        if (!await fileExists(p)) {
+    
+        if (!await fileExists(resourcePath)) {
             // Otherwise return 404 not found
             res.statusCode = 404;
             res.end("Not Found");
             return;
         }
-
+    
         // Serve resource
-        // TODO(randomuserhi): cleanup
-        const mimeTypes = {
-            '.html': 'text/html',
-            '.js': 'text/javascript',
-            '.mjs': 'text/javascript',
-            '.css': 'text/css',
-            '.json': 'application/json',
-            '.png': 'image/png',
-            '.jpg': 'image/jpg',
-            '.gif': 'image/gif',
-            '.wav': 'audio/wav',
-            '.mp4': 'video/mp4',
-            '.woff': 'application/font-woff',
-            '.ttf': 'application/font-ttf',
-            '.eot': 'application/vnd.ms-fontobject',
-            '.otf': 'application/font-otf',
-            '.svg': 'application/image/svg+xml'
-        } as const;
-        const extname: keyof typeof mimeTypes = Path.extname(p).toLowerCase() as any;
 
+        const extname: keyof typeof mimeTypes = Path.extname(resourcePath).toLowerCase() as any;
         const contentType = mimeTypes[extname] || 'application/octet-stream';
-
+    
         try {
-            const content = await File.readFile(p);
+            const content = await File.readFile(resourcePath);
             res.writeHead(200, { 'Content-Type': contentType });
             res.end(content, 'utf-8');
         } catch (err) {
             res.statusCode = 500;
             res.end("Error 500");
-            console.error(err);
+            console.error(`${req.url} > ${resourcePath}: `, err);
         }
     }
 }
 
+/** Rapid Runtime */
 export class RapidRuntime {
-    private instances = new Map<string, PackageInstance>();
+    /** Stores currently running app instances */
+    private instances = new Map<string, RapidApp>();
+    
+    /** Set of packages that are being watched */
+    private readonly watchList = new Map<string, PackageInfo>();
 
-    public packageRegistry: PackageRegistry;
+    /** Registry of packages */
+    public readonly packageRegistry: PackageRegistry;
 
-    public packageManager: PackageManager;
+    /** Watch builder for automatically building packages */
+    public readonly packageWatchBuilder: PackageWatchBuilder;
 
+    /** Builder for building packages without watcher */
+    public readonly packageBuilder: PackageBuilder;
+
+    /**
+     * 
+     * @param directories 
+     * @param typeDir 
+     */
     public constructor(directories: string[], typeDir: string) {
         this.packageRegistry = new PackageRegistry(directories);
-        this.packageManager = new PackageManager(this.packageRegistry, typeDir);
+        this.packageWatchBuilder = new PackageWatchBuilder(this.packageRegistry, typeDir);
+        this.packageBuilder = new PackageBuilder(typeDir);
 
-        this.packageManager.builder.onASLTranspiled = async (paths) => {
+        this.packageWatchBuilder.onIncrementalBuild = (paths) => {
             registry.invalidate(paths);
         };
     }
@@ -316,9 +328,36 @@ export class RapidRuntime {
         // TODO(randomuserhi): Implement redirect on basic case for "/"
         //                     User can specify what they want for the default app
 
-        // TODO(randomuserhi): Redirect "localhost:3000/pckg" links to "localhost:3000/pckg/" otherwise relative imports fail:
-        //                     <script src="./script.js"> on "localhost:3000/pckg" resolves to "localhost:3000/script.js"
-        //                     but on "localhost:3000/pckg/" it resolves to "localhost:3000/pckg/script.js" properly
+        // Special case for fetching from Rapid standard library (front end)
+        if (req.url!.toLowerCase().startsWith("/rapid")) {
+            // Get url relative to rapid directory
+            let url = new URL(req.url!.replace("/rapid", ""), "https://localhost/").pathname;
+            
+            // Resolve resource path
+            let resourcePath; 
+            if (url === "/" || url === "/.mjs") {
+                resourcePath = Path.join(__dirname, "RapidWebLib", "rapid.mjs");
+            } else {
+                if (Path.extname(url) === "") url += ".mjs"; // By default assume `.mjs` extension
+                resourcePath = Path.join(__dirname, "RapidWebLib/lib", url);
+            }
+
+            // Serve resource
+
+            const extname: keyof typeof mimeTypes = Path.extname(resourcePath).toLowerCase() as any;
+            const contentType = mimeTypes[extname] || 'application/octet-stream';
+        
+            try {
+                const content = await File.readFile(resourcePath);
+                res.writeHead(200, { 'Content-Type': contentType });
+                res.end(content, 'utf-8');
+            } catch (err) {
+                res.statusCode = 500;
+                res.end("Error 500");
+                console.error(`${req.url} > ${resourcePath}: `, err);
+            }
+            return;
+        }
 
         // Obtain package from request
         const parts = req.url!.split("/");
@@ -326,37 +365,66 @@ export class RapidRuntime {
             res.statusCode = 404;
             res.end("Not valid URL");
             return;
+        } else if (parts.length === 2) {
+            // Redirect "localhost:3000/pckg" links to "localhost:3000/pckg/" otherwise relative imports fail:
+            // <script src="./script.js"> on "localhost:3000/pckg" resolves to "localhost:3000/script.js"
+            // but on "localhost:3000/pckg/" it resolves to "localhost:3000/pckg/script.js" properly
+            res.writeHead(302, { Location: `${req.url!}/` });
+            res.end();
+            return;
         }
 
-        const pckg = decodeURI(parts[1]);
-        if (pckg === "") {
+        const pckgPathPrefix = `/${parts[1]}`;
+
+        let pckgName = decodeURI(parts[1]);
+
+        // if file system is not case sensitive, resolve package names as always lower-case
+        if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
+        
+        if (pckgName === "") {
             res.statusCode = 404;
             res.end("Not valid URL");
             return;
         }
 
-        const pckgPath = `/${pckg}`;
-
-        let instance = this.instances.get(pckgPath);
+        let instance = this.instances.get(pckgName);
         if (instance === undefined) {
-            const pckgInfo = await this.packageRegistry.get(pckg);
+            const pckgInfo = await this.packageRegistry.get(pckgName);
             if (pckgInfo === undefined) {
                 res.statusCode = 404;
                 res.end("Not valid package");
                 return;
             }
 
-            // Auto watch package
-            await this.packageManager.watch(pckgInfo);
+            // Auto watch launched apps
+            this.watch(pckgInfo.name);
 
-            instance = new PackageInstance(this, pckgInfo);
+            // Launch app instance
+            instance = new RapidApp(this, pckgInfo);
             await instance.loadEntry();
 
-            this.instances.set(pckgPath, instance);
+            this.instances.set(pckgName, instance);
         }
 
-        req.url = new URL(req.url!.replace(pckgPath, ""), "https://localhost/").pathname;
+        // Pass request onto the given package
+        req.url = new URL(req.url!.replace(pckgPathPrefix, ""), "https://localhost/").pathname;
         instance.onRequest(req, res);
+    }
+
+    public watch(pckg: string) {
+        if (this.watchList.has(pckg)) return;
+
+        const info = this.packageRegistry.getSync(pckg);
+        if (info === undefined) return;
+
+        this.watchList.set(pckg, info);
+        this.packageWatchBuilder.start([...this.watchList.values()]);
+    }
+
+    public unwatch(pckg: string) {
+        if (!this.watchList.has(pckg)) return;
+        this.watchList.delete(pckg);
+        this.packageWatchBuilder.start([...this.watchList.values()]);
     }
 
     public listen(port: number): Promise<void> {

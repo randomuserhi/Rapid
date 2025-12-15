@@ -6,7 +6,7 @@
  * difficult to maintain.
  */
 export class Result<T, ErrorType = any> {
-    private static OK = Symbol("ASLRequestResult.OK");
+    private static OK = Symbol("Result.OK");
 
     error: typeof Result<T, ErrorType>["OK"] | ErrorType;
     item: T;

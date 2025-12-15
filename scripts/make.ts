@@ -28,9 +28,9 @@ try {
     console.log("\nDeleting build folders...");
     await rm("./build", { recursive: true, force: true });
     await rm("./src/Rapid/build", { recursive: true, force: true });
-    await rm("./src/RapidLib/build", { recursive: true, force: true });
+    await rm("./src/RapidWebLib/build", { recursive: true, force: true });
 
-    await tsc(["-b", "./src/Rapid", "./src/RapidLib"], "Transpiling Typescript");
+    await tsc(["-b", "./src/Rapid", "./src/RapidWebLib"], "Transpiling Typescript");
 
     console.log("\nCopying resources to build folder...");
     await mkdir("./build");
@@ -38,8 +38,16 @@ try {
     await mkdir("./build/Rapid");
     await cp("./src/Rapid/build", "./build/Rapid", { recursive: true });
 
-    await mkdir("./build/RapidLib");
-    await cp("./src/RapidLib/build", "./build/RapidLib", { recursive: true });
+    await mkdir("./build/Rapid/RapidWebLib");
+    await cp("./src/RapidWebLib/build", "./build/Rapid/RapidWebLib", { recursive: true });
+
+    console.log("\nGenerate Registry Types...");
+
+    /*await mkdir("./build/@types");
+    await cp("./src/@types", "./build/@types", { recursive: true });
+
+    await mkdir("./build/@types/node");
+    await cp("./node_modules/@types/node", "./build/@types/node", { recursive: true });*/
 
     console.log("\nBuild complete!");
 } catch (e) {
