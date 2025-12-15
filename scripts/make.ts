@@ -43,11 +43,14 @@ try {
 
     console.log("\nGenerate Registry Types...");
 
-    /*await mkdir("./build/@types");
-    await cp("./src/@types", "./build/@types", { recursive: true });
+    const typesFolder = "E:\\Git\\RapidRegistry\\@types";
+    await rm(typesFolder, { recursive: true, force: true });
 
-    await mkdir("./build/@types/node");
-    await cp("./node_modules/@types/node", "./build/@types/node", { recursive: true });*/
+    await mkdir(typesFolder);
+    await cp("./src/@types", typesFolder, { recursive: true });
+
+    await mkdir(path.join(typesFolder, "node"));
+    await cp("./node_modules/@types/node", path.join(typesFolder, "node"), { recursive: true });
 
     console.log("\nBuild complete!");
 } catch (e) {
