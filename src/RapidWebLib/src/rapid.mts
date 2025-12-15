@@ -21,12 +21,10 @@ export function loadEntry(entry: string) {
             if (path.startsWith("rapid")) {
                 return `/${path}.mjs`;
             }
-
-            throw new Error(`Could not find: ${path}`);
         }
 
         return await defaultImportHook(module, path);
     };
-    
+
     env.fetch(new URL(entry, pckgRoot).toString());
 }

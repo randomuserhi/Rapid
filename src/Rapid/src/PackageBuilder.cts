@@ -42,11 +42,54 @@ function relPath(baseDir: string, path: string) {
 }
 
 /**
+ * Route overrides for resolving types and paths
+ * Often used for interop for node_modules packages
+ */
+interface PackageRoutes {
+    types?: Ts.MapLike<string[]>;
+    paths?: Ts.MapLike<string[]>;
+}
+
+/**
+ * Package config
+ */
+export interface PackageConfig {
+    /** Config for backend code */
+    back?: {
+        /** Entry point for backend scripts */
+        entry?: string;
+    } & PackageRoutes;
+
+    /** Config for flex code */
+    flex?: PackageRoutes;
+
+    /** Config for frontend code */
+    front?: PackageRoutes;
+
+    /** List of dependencies */
+    dependencies?: string[];
+}
+
+/**
+ * Typescript config
+ */
+interface TsConfig {
+    files?: string[];
+    extends?: string;
+    compilerOptions?: Ts.CompilerOptions;
+    references?: Ts.ProjectReference[];
+    include?: string[];
+}
+
+/**
  * Metadata regarding a given package
  */
 export interface PackageInfo {
     /** package name */
     name: string;
+
+    /** Package config information */
+    config: PackageConfig;
 
     /** Package base directory */
     baseDir: string;
@@ -103,33 +146,81 @@ const RAPID_FRONT_DIRNAME = "front";
 /**
  * Manages the directories that exist in a registry and abstracts them behind
  * a single interface.
+ * 
+ * TODO(randomuserhi): PackageInfo should contain the parsed config file. 
+ *                     The registry should caches PackageInfo objects and returns the same one to prevent reading disk all the time.
+ *                     When fetching from cache, it checks if the file has been changed since last read (check file last-updated timestamp).
+ *                     If it has, refetch from disk and update cache.
  */
 export class PackageRegistry {
     private readonly directories: string[];
+
+    private readonly cache = new Map<string, { info: PackageInfo, mtimeMs: number }>();
 
     constructor(directories: string[]) {
         this.directories = directories;
     }
 
     /** Helper function that creates package info object */
-    private createInfo(pckg: string, baseDir: string, configPath: string): PackageInfo {
-        return {
-            name: pckg,
-            baseDir,
-            buildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME),
-            typeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME),
-            flexTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FLEX_DIRNAME),
-            backTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_BACK_DIRNAME),
-            frontTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FRONT_DIRNAME),
-            flexDir: Path.join(baseDir, RAPID_FLEX_DIRNAME),
-            backDir: Path.join(baseDir, RAPID_BACK_DIRNAME),
-            frontDir: Path.join(baseDir, RAPID_FRONT_DIRNAME),
-            flexBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FLEX_DIRNAME),
-            backBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_BACK_DIRNAME),
-            frontBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FRONT_DIRNAME),
-            configPath,
-            TsconfigDir: Path.join(baseDir, RAPID_TSCONFIG_DIRNAME)
-        };
+    private async createInfo(pckg: string, baseDir: string, configPath: string, configStat: FileSync.Stats): Promise<PackageInfo> {
+        // Check cache
+        let cachedInfo = this.cache.get(configPath);
+        if (cachedInfo === undefined || cachedInfo.mtimeMs < configStat.mtimeMs) {
+            cachedInfo = {
+                info: {
+                    name: pckg,
+                    config: JSON.parse(await File.readFile(configPath, "utf-8")),
+                    baseDir,
+                    buildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME),
+                    typeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME),
+                    flexTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FLEX_DIRNAME),
+                    backTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_BACK_DIRNAME),
+                    frontTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FRONT_DIRNAME),
+                    flexDir: Path.join(baseDir, RAPID_FLEX_DIRNAME),
+                    backDir: Path.join(baseDir, RAPID_BACK_DIRNAME),
+                    frontDir: Path.join(baseDir, RAPID_FRONT_DIRNAME),
+                    flexBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FLEX_DIRNAME),
+                    backBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_BACK_DIRNAME),
+                    frontBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FRONT_DIRNAME),
+                    configPath,
+                    TsconfigDir: Path.join(baseDir, RAPID_TSCONFIG_DIRNAME)
+                },
+                mtimeMs: configStat.mtimeMs
+            };
+            this.cache.set(configPath, cachedInfo);
+        }
+        return cachedInfo.info;
+    }
+
+    /** Helper function that creates package info object */
+    private createInfoSync(pckg: string, baseDir: string, configPath: string, configStat: FileSync.Stats): PackageInfo {
+        // Check cache
+        let cachedInfo = this.cache.get(configPath);
+        if (cachedInfo === undefined || cachedInfo.mtimeMs < configStat.mtimeMs) {
+            cachedInfo = {
+                info: {
+                    name: pckg,
+                    config: JSON.parse(FileSync.readFileSync(configPath, "utf-8")),
+                    baseDir,
+                    buildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME),
+                    typeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME),
+                    flexTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FLEX_DIRNAME),
+                    backTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_BACK_DIRNAME),
+                    frontTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FRONT_DIRNAME),
+                    flexDir: Path.join(baseDir, RAPID_FLEX_DIRNAME),
+                    backDir: Path.join(baseDir, RAPID_BACK_DIRNAME),
+                    frontDir: Path.join(baseDir, RAPID_FRONT_DIRNAME),
+                    flexBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FLEX_DIRNAME),
+                    backBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_BACK_DIRNAME),
+                    frontBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FRONT_DIRNAME),
+                    configPath,
+                    TsconfigDir: Path.join(baseDir, RAPID_TSCONFIG_DIRNAME)
+                },
+                mtimeMs: configStat.mtimeMs
+            };
+            this.cache.set(configPath, cachedInfo);
+        }
+        return cachedInfo.info;
     }
 
     /**
@@ -185,14 +276,14 @@ export class PackageRegistry {
         if (basename !== RAPID_CONFIG_DIRNAME) return undefined;
 
         const baseDir = Path.dirname(path);
-        
+
         const pckg = Path.basename(baseDir);
 
         const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
         const configStat = await fileStat(configPath);
 
         if (configStat !== undefined && configStat.isFile()) {
-            return this.createInfo(pckg, baseDir, configPath);
+            return await this.createInfo(pckg, baseDir, configPath, configStat);
         }
 
         return undefined;
@@ -211,14 +302,14 @@ export class PackageRegistry {
         if (basename !== RAPID_CONFIG_DIRNAME) return undefined;
 
         const baseDir = Path.dirname(path);
-        
+
         const pckg = Path.basename(baseDir);
 
         const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
         const configStat = fileStatSync(configPath);
 
         if (configStat !== undefined && configStat.isFile()) {
-            return this.createInfo(pckg, baseDir, configPath);
+            return this.createInfoSync(pckg, baseDir, configPath, configStat);
         }
 
         return undefined;
@@ -239,37 +330,6 @@ export class PackageNotFoundError extends Error {
 }
 
 /**
- * Package config
- */
-export interface PackageConfig {
-    /** Config for backend code */
-    back?: {
-        /** Entry point for backend scripts */
-        entry?: string;
-    };
-    
-    /** Config for flex code */
-    flex?: any;
-    
-    /** Config for frontend code */
-    front?: any;
-
-    /** List of dependencies */
-    dependencies?: string[];
-}
-
-/**
- * Typescript config
- */
-interface TsConfig {
-    files?: string[];
-    extends?: string;
-    compilerOptions?: Ts.CompilerOptions;
-    references?: Ts.ProjectReference[];
-    include?: string[];
-}
-
-/**
  * Initializes a given package, generating all necessary typescript files and folders required for building
  * 
  * @param registry Package registry for resolving dependencies
@@ -287,27 +347,28 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
      */
 
     // Get the package config
-    const config: PackageConfig = JSON.parse(await File.readFile(info.configPath, "utf-8"));
+    const config = info.config;
 
     // Generate configs
-    
+
     // Resolve dependency paths
     const dependencies: PackageInfo[] = [];
     if (config.dependencies !== undefined) {
         const jobs: Promise<void>[] = [];
-    
+
         // TODO(randomuserhi): Make dependencies an array not a k,v pair
         for (const dependency of config.dependencies) {
             if (dependency === info.name) continue; // Skip dependency on self
-    
-            jobs.push(
-                registry.get(dependency)
-                    .then(info => {
-                        if (info !== undefined) dependencies.push(info);
-                    })
+
+            jobs.push(registry.get(dependency)
+                .then(info => {
+                    if (info !== undefined) {
+                        dependencies.push(info);
+                    }
+                })
             );
         }
-    
+
         await Promise.all(jobs);
     }
 
@@ -359,7 +420,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 sourceMap: false
             }
         };
-    
+
         await File.writeFile(tsconfigBasePath, JSON.stringify(tsconfigBase, null, 2));
     }
 
@@ -370,23 +431,23 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
         const createRepo = config.flex !== undefined;
         const repo = RAPID_FLEX_DIRNAME;
         const repoDir = info.flexDir;
-    
+
         const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-    
+
         // Make the directory
         if (createRepo) await File.mkdir(repoDir, { recursive: true });
         // Make config folder
         await File.mkdir(repoTsconfigDir, { recursive: true });
-    
+
         // Build directories
         const repoBuildDir = info.flexBuildDir;
         const repoTypeDir = info.flexTypeDir;
-    
+
         // Build config paths
         const repoTsconfigPath = Path.join(repoTsconfigDir, `tsconfig.${repo}.json`);
         const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
         const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
-    
+
         // Root tsconfig
         const repoTsconfigRoot: TsConfig = {
             files: [],
@@ -399,7 +460,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             ]
         };
         if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
-    
+
         // Repo config
         const repoTsconfig: TsConfig = {
             extends: relPath(repoTsconfigDir, tsconfigBasePath),
@@ -420,18 +481,54 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 }
             }
         };
-    
+        
+        const paths = repoTsconfig.compilerOptions!.paths!;
+
+        {
+            paths[`${info.name}/*`] = [
+                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
+            ];
+
+            // Parse and manage dependency type paths
+            const dependentConfig = info.config;
+            if (dependentConfig.flex !== undefined && dependentConfig.flex.types !== undefined) {
+                const types = dependentConfig.flex.types;
+                for (const k in types) {
+                    const key = k === "/" ? info.name : `${info.name}${k}`;
+                    if (!(key in paths)) paths[key] = [];
+                    for (const path of types[k]) {
+                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
+                    }
+                }
+            }
+        }
+
         // Add dependency paths
         const references: Ts.ProjectReference[] = [];
         for (const dependency of dependencies) {
-            repoTsconfig.compilerOptions!.paths![`${dependency.name}/*`] = [
+            paths[`${dependency.name}/*`] = [
                 relPath(repoTsconfigDir, Path.join(dependency.flexTypeDir, "*"))
             ];
+
+            // Parse and manage dependency type paths
+            const dependentConfig = dependency.config;
+            if (dependentConfig.flex !== undefined && dependentConfig.flex.types !== undefined) {
+                const types = dependentConfig.flex.types;
+                for (const k in types) {
+                    const key = k === "/" ? dependency.name : `${dependency.name}${k}`;
+                    if (!(key in paths)) paths[key] = [];
+                    for (const path of types[k]) {
+                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
+                    }
+                }
+            }
+
+            // Push build reference
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.asl.json")) });
         }
-    
+
         await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
-    
+
         // ASL tsconfig
         const repoTsconfigASL: TsConfig = {
             extends: relPath(repoTsconfigDir, repoTsconfigPath),
@@ -446,31 +543,31 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
         };
         await File.writeFile(repoTsconfigASLPath, JSON.stringify(repoTsconfigASL, null, 2));
     }
-    
+
     // Back Repo
     {
         const createRepo = config.back !== undefined;
         const repo = RAPID_BACK_DIRNAME;
         const repoDir = info.backDir;
-    
+
         const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-    
+
         // Make the directory
         if (createRepo) await File.mkdir(repoDir, { recursive: true });
         // Make config folder
         await File.mkdir(repoTsconfigDir, { recursive: true });
-    
+
         // Build directories
         const repoBuildDir = info.backBuildDir;
         const repoTypeDir = info.backTypeDir;
-    
+
         // Build config paths
         const repoTsconfigPath = Path.join(repoTsconfigDir, `tsconfig.${repo}.json`);
         const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
         const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
         const repoTsconfigCtsPath = Path.join(repoTsconfigDir, "tsconfig.cjs.json");
         const repoTsconfigMtsPath = Path.join(repoTsconfigDir, "tsconfig.mjs.json");
-    
+
         // Root tsconfig
         const repoTsconfigRoot: TsConfig = {
             files: [],
@@ -485,7 +582,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             ]
         };
         if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
-    
+
         // Repo config
         const repoTsconfig: TsConfig = {
             extends: relPath(repoTsconfigDir, tsconfigBasePath),
@@ -513,20 +610,57 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 }
             }
         };
-    
+
+        const paths = repoTsconfig.compilerOptions!.paths!;
+        
+        {
+            paths[`${info.name}/*`] = [
+                relPath(repoTsconfigDir, Path.join(info.backTypeDir, "*")),
+                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
+            ];
+
+            // Parse and manage dependency type paths
+            const dependentConfig = info.config;
+            if (dependentConfig.back !== undefined && dependentConfig.back.types !== undefined) {
+                const types = dependentConfig.back.types;
+                for (const k in types) {
+                    const key = k === "/" ? info.name : `${info.name}${k}`;
+                    if (!(key in paths)) paths[key] = [];
+                    for (const path of types[k]) {
+                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
+                    }
+                }
+            }
+        }
+        
         // Add dependency paths
         const references: Ts.ProjectReference[] = [];
         for (const dependency of dependencies) {
-            repoTsconfig.compilerOptions!.paths![`${dependency.name}/*`] = [
+            paths[`${dependency.name}/*`] = [
                 relPath(repoTsconfigDir, Path.join(dependency.backTypeDir, "*")),
                 relPath(repoTsconfigDir, Path.join(dependency.flexTypeDir, "*"))
             ];
+
+            // Parse and manage dependency type paths
+            const dependentConfig = dependency.config;
+            if (dependentConfig.back !== undefined && dependentConfig.back.types !== undefined) {
+                const types = dependentConfig.back.types;
+                for (const k in types) {
+                    const key = k === "/" ? dependency.name : `${dependency.name}${k}`;
+                    if (!(key in paths)) paths[key] = [];
+                    for (const path of types[k]) {
+                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
+                    }
+                }
+            }
+
+            // Push build references
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.asl.json")) });
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.mjs.json")) });
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.cjs.json")) });
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
         }
-    
+
         // Add flex folder as dependency
         repoTsconfig.compilerOptions!.paths!["*"].push(Path.join(relPath(repoTsconfigDir, info.flexDir), "*"));
         references.push({ path: relPath(repoTsconfigDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
@@ -582,30 +716,30 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
 
         await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));
     }
-    
+
     // Front Repo
     {
         const createRepo = config.front !== undefined;
         const repo = RAPID_FRONT_DIRNAME;
         const repoDir = info.frontDir;
-    
+
         const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-    
+
         // Make the directory
         if (createRepo) await File.mkdir(repoDir, { recursive: true });
         // Make config folder
         await File.mkdir(repoTsconfigDir, { recursive: true });
-    
+
         // Build directories
         const repoBuildDir = info.frontBuildDir;
         const repoTypeDir = info.frontTypeDir;
-    
+
         // Build config paths
         const repoTsconfigPath = Path.join(repoTsconfigDir, `tsconfig.${repo}.json`);
         const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
         const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
         const repoTsconfigMtsPath = Path.join(repoTsconfigDir, "tsconfig.mjs.json");
-    
+
         // Root tsconfig
         const repoTsconfigRoot: TsConfig = {
             files: [],
@@ -619,7 +753,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             ]
         };
         if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
-    
+
         // Repo config
         const repoTsconfig: TsConfig = {
             extends: relPath(repoTsconfigDir, tsconfigBasePath),
@@ -662,7 +796,43 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 relPath(repoTsconfigDir, Path.join(typeDir, "rapid", RAPID_FRONT_DIRNAME, "lib", "*"))
             ]
         };
-    
+
+        {
+            aslPaths[`${info.name}/*`] = [
+                relPath(repoTsconfigDir, Path.join(info.frontTypeDir, "*")),
+                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
+            ];
+            mtsPaths[`/${info.name}/*`] = [
+                relPath(repoTsconfigDir, Path.join(info.frontTypeDir, "*")),
+                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
+            ];
+
+            // Parse and manage dependency type paths
+            const dependentConfig = info.config;
+            if (dependentConfig.front !== undefined && dependentConfig.front.types !== undefined) {
+                const types = dependentConfig.front.types;
+                for (const k in types) {
+                    {
+                        const key = k === "/" ? info.name : `${info.name}${k}`;
+
+                        if (!(key in aslPaths)) aslPaths[key] = [];
+                        for (const path of types[k]) {
+                            aslPaths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
+                        }
+                    }
+
+                    {
+                        const key = k === "/" ? `/${info.name}` : `/${info.name}${k}`;
+
+                        if (!(key in mtsPaths)) mtsPaths[key] = [];
+                        for (const path of types[k]) {
+                            mtsPaths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
+                        }
+                    }
+                }
+            }
+        }
+
         // Add dependency paths
         const references: Ts.ProjectReference[] = [];
         for (const dependency of dependencies) {
@@ -674,11 +844,40 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 relPath(repoTsconfigDir, Path.join(dependency.frontTypeDir, "*")),
                 relPath(repoTsconfigDir, Path.join(dependency.flexTypeDir, "*"))
             ];
+
+            // Parse and manage dependency type paths
+            const dependentConfig = dependency.config;
+            if (dependentConfig.front !== undefined && dependentConfig.front.types !== undefined) {
+                const types = dependentConfig.front.types;
+                for (const k in types) {
+                    {
+                        const key = k === "/" ? dependency.name : `${dependency.name}${k}`;
+
+                        if (!(key in aslPaths)) aslPaths[key] = [];
+                        for (const path of types[k]) {
+                            aslPaths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
+                        }
+                    }
+
+                    {
+                        const key = k === "/" ? `/${dependency.name}` : `/${dependency.name}${k}`;
+
+                        if (!(key in mtsPaths)) mtsPaths[key] = [];
+                        for (const path of types[k]) {
+                            mtsPaths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
+                        }
+                    }
+                }
+            }
+
+            //
+
+            // Push build references
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.asl.json")) });
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.mjs.json")) });
             references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
         }
-    
+
         // Add flex folder as dependency
         aslPaths["*"].push(Path.join(relPath(repoTsconfigDir, info.flexDir), "*"));
         references.push({ path: relPath(repoTsconfigDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
@@ -727,7 +926,7 @@ export class PackageWatchBuilder {
 
     /** Typescript watch host */
     private readonly watchHost: Ts.SolutionBuilderWithWatchHost<Ts.SemanticDiagnosticsBuilderProgram> = undefined!;
-    
+
     /** Typescript builder */
     private builder: Ts.SolutionBuilder<Ts.SemanticDiagnosticsBuilderProgram> | undefined = undefined;
 
@@ -739,7 +938,7 @@ export class PackageWatchBuilder {
 
     /** Diagnostic callback */
     public reportDiagnostic: Ts.DiagnosticReporter | undefined;
-    
+
     /** Diagnostic callback */
     public reportSolutionBuilderStatus: Ts.DiagnosticReporter | undefined;
 
@@ -790,7 +989,7 @@ export class PackageWatchBuilder {
     }
 
     constructor(registry: PackageRegistry, typeDir: string) {
-        this.registry = registry; 
+        this.registry = registry;
         this.typeDir = typeDir;
 
         // Create a new typescript system which keeps track of file watchers
@@ -841,7 +1040,7 @@ export class PackageWatchBuilder {
                 origWriteFile?.(fileName, babelResult.code, writeByteOrderMark);
             } break;
 
-            // Treat other files as normal
+                // Treat other files as normal
             default: {
                 origWriteFile?.(fileName, code, writeByteOrderMark);
             } break;
@@ -906,13 +1105,17 @@ export class PackageWatchBuilder {
 
             const info = await this.registry.fromConfigPath(configPath);
             if (info !== undefined) {
-                await initPackage(this.registry, info, this.typeDir);
+                try {
+                    await initPackage(this.registry, info, this.typeDir);
+                } catch (err) {
+                    console.error(err);
+                }
             }
 
             this.start(this.watchList); // Start builds again
         });
     }
-    
+
     /** 
      * Stops the watcher
      */
@@ -924,7 +1127,7 @@ export class PackageWatchBuilder {
         // Stop all file watchers
         for (const watcher of this.fileWatchers) watcher.close();
         this.fileWatchers.clear();
-    
+
         // unassign builder
         this.builder = undefined;
     }
@@ -935,7 +1138,7 @@ export class PackageBuilder {
 
     /** Diagnostic callback */
     public reportDiagnostic: Ts.DiagnosticReporter | undefined;
-    
+
     /** Diagnostic callback */
     public reportSolutionBuilderStatus: Ts.DiagnosticReporter | undefined;
 
@@ -978,7 +1181,7 @@ export class PackageBuilder {
                 origWriteFile?.(fileName, babelResult.code, writeByteOrderMark);
             } break;
 
-            // Treat other files as normal
+                // Treat other files as normal
             default: {
                 origWriteFile?.(fileName, code, writeByteOrderMark);
             } break;
@@ -1001,7 +1204,7 @@ export class PackageBuilder {
  */
 export class PackageManager_DEPRECATED {
     private readonly registry: PackageRegistry;
-    
+
     private readonly typeDir: string;
 
     public readonly watchBuilder: PackageWatchBuilder;
@@ -1024,10 +1227,10 @@ export class PackageManager_DEPRECATED {
 
     /** Adds a package to watch list - automatically makes the package and builds it on changes. */
     public async watch(pckg: PackageInfo): Promise<void>
-    
+
     /** Adds a package to watch list - automatically makes the package and builds it on changes. */
     public async watch(pckg: string): Promise<void>
-    
+
     public async watch(pckg: string | PackageInfo) {
         let pckgInfo: string | PackageInfo | undefined = pckg;
         if (typeof pckgInfo === "string") {
@@ -1035,7 +1238,7 @@ export class PackageManager_DEPRECATED {
             pckgInfo = await this.registry.get(pckgInfo);
             if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName);
         }
-    
+
         const index = this.watchList.findIndex((info) => info.baseDir === pckgInfo.baseDir);
         if (index < 0) {
             this.watchBuilder.stop();
@@ -1043,12 +1246,12 @@ export class PackageManager_DEPRECATED {
             this.watchBuilder.start(this.watchList);
         }
     }
-    
+
     /** Removes a package from the watch list */
     public async unwatch(pckg: string) {
         const pckgInfo = await this.registry.get(pckg);
         if (pckgInfo === undefined) throw new PackageNotFoundError(pckg);
-    
+
         const index = this.watchList.findIndex((info) => info.baseDir === pckgInfo.baseDir);
         if (index >= 0) {
             this.watchBuilder.stop();
@@ -1059,10 +1262,10 @@ export class PackageManager_DEPRECATED {
 
     /** Builds the given package */
     public async build(pckg: PackageInfo): Promise<void>
-    
+
     /** Builds the given package */
     public async build(pckg: string): Promise<void>
-    
+
     public async build(pckg: string | PackageInfo) {
         let pckgInfo: string | PackageInfo | undefined = pckg;
         if (typeof pckgInfo === "string") {
@@ -1070,7 +1273,7 @@ export class PackageManager_DEPRECATED {
             pckgInfo = await this.registry.get(pckgInfo);
             if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName);
         }
-    
+
         this.watchBuilder.stop();
         this.builder.build(this.registry, pckgInfo);
         this.watchBuilder.start(this.watchList);

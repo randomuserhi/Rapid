@@ -753,11 +753,6 @@ export class ASLEnvironment {
             
                 throw new ASLImportError(`Web based ASL does not support '.cjs' style imports.`);
             }
-            case ".mjs": {
-            // ESM import
-
-                return import(path);
-            }
             case ".js": {
             // ASL import
 
@@ -777,9 +772,13 @@ export class ASLEnvironment {
                     return result.item;
                 });
             }
-            }
+            case ".mjs":
+            default: {
+            // ESM import
 
-            throw new ASLImportError(`Import type is derived from file extension, please use a valid extension: ".cjs", ".mjs", ".js"`);
+                return import(path);
+            }
+            }
         }).then((exports) => {
             // Handle default imports
             if (parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {

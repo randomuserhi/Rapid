@@ -87,7 +87,7 @@ export class RapidApp {
     private readonly runtime: RapidRuntime;
 
     /** Package */
-    public readonly pckgInfo: PackageInfo;
+    public pckgInfo: PackageInfo;
 
     /** ASL environment of the app */
     private readonly environment: ASLEnvironment;
@@ -133,7 +133,7 @@ export class RapidApp {
             if (await fileExists(fullPath)) return fullPath;
 
             let resolvedPath: string;
-            
+
             // Otherwise, resolve the path by checking build / non-build directory paths
             // depending on which we started in
             const inBuildDir = fullPath.startsWith(buildDir);
@@ -150,7 +150,7 @@ export class RapidApp {
             }
 
             // If we still can't find it, check flex directories
-            const inFlexDirectory = inBuildDir ? fullPath.startsWith(flexBuildDir): fullPath.startsWith(flexDir);
+            const inFlexDirectory = inBuildDir ? fullPath.startsWith(flexBuildDir) : fullPath.startsWith(flexDir);
             if (inFlexDirectory) {
                 const relPath = inBuildDir ? Path.relative(backBuildDir, fullPath) : Path.relative(backDir, fullPath);
 
@@ -201,7 +201,7 @@ export class RapidApp {
 
             const pckgInfo = await this.runtime.packageRegistry.get(pckgName);
             if (pckgInfo !== undefined) {
-                const { 
+                const {
                     backDir,
                     backBuildDir,
                     flexDir,
@@ -211,21 +211,76 @@ export class RapidApp {
                 // Trim the package name from the path
                 path = Path.relative(pckgName, path);
 
-                // Check if it is in build folder first
-                let resolvedPath = Path.join(backBuildDir, path);
-                if (await fileExists(resolvedPath)) return resolvedPath;
+                if (path !== "") {
+                    // Check if it is in build folder first
+                    let resolvedPath = Path.join(backBuildDir, path);
+                    if (await fileExists(resolvedPath)) return resolvedPath;
 
-                // Otherwise check base folder
-                resolvedPath = Path.join(backDir, path);
-                if (await fileExists(resolvedPath)) return resolvedPath;
+                    // Otherwise check base folder
+                    resolvedPath = Path.join(backDir, path);
+                    if (await fileExists(resolvedPath)) return resolvedPath;
 
-                // Otherwise check flex build folder
-                resolvedPath = Path.join(flexBuildDir, path);
-                if (await fileExists(resolvedPath)) return resolvedPath;
+                    // Otherwise check flex build folder
+                    resolvedPath = Path.join(flexBuildDir, path);
+                    if (await fileExists(resolvedPath)) return resolvedPath;
 
-                // Otherwise check flex folder
-                resolvedPath = Path.join(flexDir, path);
-                if (await fileExists(resolvedPath)) return resolvedPath;
+                    // Otherwise check flex folder
+                    resolvedPath = Path.join(flexDir, path);
+                    if (await fileExists(resolvedPath)) return resolvedPath;
+                }
+
+                // Otherwise check package paths
+                if (pckgInfo.config.back?.paths !== undefined) {
+                    const paths = pckgInfo.config.back.paths;
+
+                    path.replaceAll("\\", "/");
+
+                    let length = 0;
+                    let match: { paths: string[], path: string } | undefined = undefined;
+                    for (const k in paths) {
+                        let pattern = k;
+                        let isMatch = false;
+                        let matchedPath = path;
+                        if (pattern === "/") {
+                            isMatch = path === "";
+                        } else {
+                            if (pattern.endsWith("/*")) {
+                                pattern = pattern.slice(0, -1);
+                            }
+
+                            if (pattern.endsWith("/")) {
+                                isMatch = path.startsWith(pattern);
+                                matchedPath = path.replace(pattern, "");
+                            } else {
+                                isMatch = pattern === path;
+                            }
+                        }
+
+                        const size = pattern.split("/").length - ((pattern.startsWith("/") || pattern.startsWith("./")) ? 1 : 0);
+                        if (isMatch && size > length) {
+                            length = size;
+                            match = {
+                                paths: paths[k],
+                                path: matchedPath
+                            };
+                        }
+                    }
+
+                    if (match !== undefined) {
+                        for (let p of match.paths) {
+                            if (p.endsWith("/*")) {
+                                p = p.slice(0, -1);
+                            }
+
+                            if (p.endsWith("/")) {
+                                resolvedPath = Path.join(baseDir, p, match.path);
+                            } else {
+                                resolvedPath = Path.join(baseDir, p);
+                            }
+                            if (await fileExists(resolvedPath)) return resolvedPath;
+                        }
+                    }
+                }
             }
         }
 
@@ -253,33 +308,89 @@ export class RapidApp {
                 return;
             }
         }
-    
+
         // If no handler is found, try to find resource from "front" directory
         let resourcePath = Path.join(this.pckgInfo.frontBuildDir, req.url!);
-        if (!await fileExists(resourcePath)) {
+        if (!await fileExists(resourcePath) || req.url! === "/") {
             // If its not in the build directory, check base directory
             resourcePath = Path.join(this.pckgInfo.frontDir, req.url!);
-            if (!await fileExists(resourcePath)) {
+            if (!await fileExists(resourcePath) || req.url! === "/") {
                 // Otherwise check flex directories
                 resourcePath = Path.join(this.pckgInfo.flexBuildDir, req.url!);
-                if (!await fileExists(resourcePath)) {
+                if (!await fileExists(resourcePath) || req.url! === "/") {
                     resourcePath = Path.join(this.pckgInfo.flexDir, req.url!);
+                    // Finally check package path mappings
+                    if ((!await fileExists(resourcePath) || req.url! === "/")) {
+                        this.pckgInfo = (await this.runtime.packageRegistry.get(this.pckgInfo.name))!;
+
+                        if (this.pckgInfo.config.front?.paths !== undefined) {
+                            const paths = this.pckgInfo.config.front.paths;
+
+                            const path = req.url!;
+
+                            let length = 0;
+                            let match: { paths: string[], path: string } | undefined = undefined;
+                            for (const k in paths) {
+                                let pattern = k;
+                                let isMatch = false;
+                                let matchedPath = path;
+                                if (pattern === "/") {
+                                    isMatch = path === "/";
+                                } else {
+                                    if (pattern.endsWith("/*")) {
+                                        pattern = pattern.slice(0, -1);
+                                    }
+
+                                    if (pattern.endsWith("/")) {
+                                        isMatch = path.startsWith(pattern);
+                                        matchedPath = path.replace(pattern, "");
+                                    } else {
+                                        isMatch = pattern === path;
+                                    }
+                                }
+
+                                const size = pattern.split("/").length - ((pattern.startsWith("/") || pattern.startsWith("./")) ? 1 : 0);
+                                if (isMatch && size > length) {
+                                    length = size;
+                                    match = {
+                                        paths: paths[k],
+                                        path: matchedPath
+                                    };
+                                }
+                            }
+
+                            if (match !== undefined) {
+                                for (let p of match.paths) {
+                                    if (p.endsWith("/*")) {
+                                        p = p.slice(0, -1);
+                                    }
+
+                                    if (p.endsWith("/")) {
+                                        resourcePath = Path.join(this.pckgInfo.baseDir, p, match.path);
+                                    } else {
+                                        resourcePath = Path.join(this.pckgInfo.baseDir, p);
+                                    }
+                                    if (await fileExists(resourcePath)) break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-    
+
         if (!await fileExists(resourcePath)) {
             // Otherwise return 404 not found
             res.statusCode = 404;
             res.end("Not Found");
             return;
         }
-    
+
         // Serve resource
 
         const extname: keyof typeof mimeTypes = Path.extname(resourcePath).toLowerCase() as any;
         const contentType = mimeTypes[extname] || 'application/octet-stream';
-    
+
         try {
             const content = await File.readFile(resourcePath);
             res.writeHead(200, { 'Content-Type': contentType });
@@ -296,7 +407,7 @@ export class RapidApp {
 export class RapidRuntime {
     /** Stores currently running app instances */
     private instances = new Map<string, RapidApp>();
-    
+
     /** Set of packages that are being watched */
     private readonly watchList = new Map<string, PackageInfo>();
 
@@ -332,9 +443,9 @@ export class RapidRuntime {
         if (req.url!.toLowerCase().startsWith("/rapid")) {
             // Get url relative to rapid directory
             let url = new URL(req.url!.replace("/rapid", ""), "https://localhost/").pathname;
-            
+
             // Resolve resource path
-            let resourcePath; 
+            let resourcePath;
             if (url === "/" || url === "/.mjs") {
                 resourcePath = Path.join(__dirname, "RapidWebLib", "rapid.mjs");
             } else {
@@ -346,7 +457,7 @@ export class RapidRuntime {
 
             const extname: keyof typeof mimeTypes = Path.extname(resourcePath).toLowerCase() as any;
             const contentType = mimeTypes[extname] || 'application/octet-stream';
-        
+
             try {
                 const content = await File.readFile(resourcePath);
                 res.writeHead(200, { 'Content-Type': contentType });
@@ -380,7 +491,7 @@ export class RapidRuntime {
 
         // if file system is not case sensitive, resolve package names as always lower-case
         if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
-        
+
         if (pckgName === "") {
             res.statusCode = 404;
             res.end("Not valid URL");

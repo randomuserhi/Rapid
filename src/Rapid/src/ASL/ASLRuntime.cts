@@ -751,12 +751,6 @@ export class ASLEnvironment {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 return new Promise((resolve) => resolve(require(path)));
             }
-            case ".cjs": {
-                // Node import
-
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                return new Promise((resolve) => resolve(require(path)));
-            }
             case ".mjs": {
                 // ESM import
 
@@ -781,9 +775,14 @@ export class ASLEnvironment {
                     return result.item;
                 });
             }
-            }
+            default:
+            case ".cjs": {
+                // Node import
 
-            throw new ASLImportError(`Import type is derived from file extension, please use a valid extension: ".cjs", ".mjs", ".js"`);
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                return new Promise((resolve) => resolve(require(path)));
+            }
+            }
         }).then((exports) => {
             // Handle default imports
             if (parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {

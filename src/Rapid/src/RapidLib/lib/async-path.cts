@@ -14,22 +14,25 @@ async function front(this: RapidApp, ...parts: string[]) {
     } = this.pckgInfo;
 
     let resolvedPath = Path.join(frontBuildDir, ...parts);
-    
+
     if (await fileExists(resolvedPath)) return resolvedPath;
     resolvedPath = Path.join(frontDir, ...parts);
     if (await fileExists(resolvedPath)) return resolvedPath;
-    
+
     resolvedPath = Path.join(flexBuildDir, ...parts);
     if (await fileExists(resolvedPath)) return resolvedPath;
     resolvedPath = Path.join(flexDir, ...parts);
-    if (await fileExists(resolvedPath)) return resolvedPath;
-    
-    throw new Error("Resource does not exist");
-    
+    return resolvedPath;
+}
+
+function base(this: RapidApp, ...parts: string[]) {
+    const { baseDir } = this.pckgInfo;
+    return Path.join(baseDir, ...parts);
 }
 
 export function link(app: RapidApp) {
     return {
-        front: front.bind(app)
+        front: front.bind(app),
+        base: base.bind(app)
     };
 }
