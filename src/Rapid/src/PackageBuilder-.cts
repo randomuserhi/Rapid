@@ -330,26 +330,37 @@ function addTsPath(paths: Ts.MapLike<string[]>, key: string, value: string | str
 }
 
 /**
- * 
+ * TODO(randomuserhi): Document
  * @param options 
  */
 async function generateInternalRepo(
     rootTsConfigPath: string,
     options: {
-        name: "back" | "flex" | "front",
         pckg: PackageInfo,
         typeDir: string,
-        createFolder: boolean,
+        
+        /** Name of internal repo */
+        name: "back" | "flex" | "front",
+
+        /** Package dependencies */
         additionalDependencies: PackageInfo[],
+
+        /** Should the repo include other repo's (cannot include self again) */
         additionalIncludes: ("back" | "flex" | "front")[],
+        
+        /** What base libraries and types should the repo use */
         lib?: string[],
         types?: string[],
+
+        /** Compilation variants, to support various file types (ASL, CJS, MJS) */
         variants: Ts.MapLike<{
             browserStyleImports: boolean,
             rapidLib: boolean,
             module: string,
             moduleResolution?: string,
         }>
+        
+        createFolder: boolean,
     }) {
     const {
         name,
