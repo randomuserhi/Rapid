@@ -1,4 +1,11 @@
-import { RapidRuntime } from "./RapidRuntime.cjs";
+import { PackageBuilder, PackageRegistry, PackageInfo } from "./PackageBuilder-.cjs";
+
+const registry = new PackageRegistry(["C:\\Users\\User\\Documents\\TestRegistry"]);
+const builder = new PackageBuilder("C:\\Users\\User\\Documents\\Git\\RapidRegistry\\@types");
+
+builder.build(registry, PackageInfo.get(registry.findPckgSync("App")!));
+
+/**import { RapidRuntime } from "./RapidRuntime.cjs";
 
 const PORT = 3000;
 
@@ -7,4 +14,4 @@ const app = new RapidRuntime(["C:\\Users\\User\\Documents\\Git\\RapidRegistry\\A
 
 app.listen(PORT).then(() => {
     console.log(`Server running at http://localhost:${PORT}/`);
-});
+});*/

@@ -23,13 +23,11 @@ function isPathSeparator(code: number) {
  * @param path Path
  * @returns File extension
  */
-function extname(path: string) {
+export function extname(path: string) {
     if (typeof path !== "string") {
         throw new TypeError(`The "path" argument must be of type string. Received type ${typeof path}`);
     }
-
     let startDot = -1;
-    let startPart = 0;
     let end = -1;
     let matchedSlash = true;
     // Track the state of characters (if any) we see before our first dot and
@@ -41,9 +39,11 @@ function extname(path: string) {
             // If we reached a path separator that was not part of a set of path
             // separators at the end of the string, stop now
             if (!matchedSlash) {
-                startPart = i + 1;
                 break;
             }
+
+            // Ignore the first path separator if its at the end of the string
+            // e.g "a.b/" will still give the extension ".b"
             continue;
         }
         if (end === -1) {
@@ -53,27 +53,23 @@ function extname(path: string) {
             end = i + 1;
         }
         if (code === CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if (startDot === -1) {
+            // Check we did not see 2 dots in a row and that there
+            // are characters prior the first dot
+            if (preDotState !== 0 && startDot !== i + 1) {
                 startDot = i;
-            } else if (preDotState !== 1) {
-                preDotState = 1;
+            } else {
+                break;
             }
-        } else if (startDot !== -1) {
+        } else if (startDot === -1) {
             // We saw a non-dot and non-path separator before our dot, so we should
             // have a good chance at having a non-empty extension
             preDotState = -1;
         }
     }
-
     if (startDot === -1 ||
         end === -1 ||
         // We saw a non-dot character immediately before the dot
-        preDotState === 0 ||
-        // The (right-most) trimmed path component is exactly '..'
-        (preDotState === 1 &&
-            startDot === end - 1 &&
-            startDot === startPart + 1)) {
+        preDotState === 0) {
         return "";
     }
     return path.slice(startDot, end);
@@ -105,6 +101,10 @@ class Ref<T> {
         return this.item === Ref.NULLPTR;
     }
 }
+
+export const ASL_EXTENSION = ".asl";
+export const ASL_EXTENSION_TS = `${ASL_EXTENSION}.ts`;
+export const ASL_EXTENSION_JS = `${ASL_EXTENSION}.js`;
 
 /** Module ID type */
 type ASLModuleId = number;
@@ -751,12 +751,14 @@ export class ASLEnvironment {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 return new Promise((resolve) => resolve(require(path)));
             }
+            case ".js":
             case ".mjs": {
                 // ESM import
 
                 return import(path);
             }
-            case ".js": {
+            case ASL_EXTENSION:
+            case ASL_EXTENSION_JS: {
                 // ASL import
 
                 const mid = registry.getMid(path);
@@ -775,7 +777,6 @@ export class ASLEnvironment {
                     return result.item;
                 });
             }
-            default:
             case ".cjs": {
                 // Node import
 
@@ -783,6 +784,8 @@ export class ASLEnvironment {
                 return new Promise((resolve) => resolve(require(path)));
             }
             }
+
+            throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
         }).then((exports) => {
             // Handle default imports
             if (parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {
