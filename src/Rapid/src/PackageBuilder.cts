@@ -4,7 +4,7 @@ import FileSync from "fs";
 import File from "fs/promises";
 import Path from "path";
 import Ts from "typescript";
-import { ASL_EXTENSION_JS, ASL_EXTENSION_TS, ASLPath } from "./ASL/ASLRuntime.cjs";
+import { ASL_EXTENSION_JS, ASL_EXTENSION_JS_MAP, ASL_EXTENSION_TS, ASLPath } from "./ASL/ASLRuntime.cjs";
 import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
 import { Result } from "./PromiseResult.cjs";
 
@@ -581,7 +581,8 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 strictFunctionTypes: true,
                 forceConsistentCasingInFileNames: true,
                 removeComments: false,
-                sourceMap: false
+                sourceMap: true,
+                inlineSources: true
             }
         };
     
@@ -676,6 +677,11 @@ export class PackageNotFoundError extends Error {
     }
 }
 
+interface ASLBuilder {
+    ASLTranspilationResults: Result<any>[];
+    ASLObjects: Map<string, string>;
+}
+
 /**
  * Typescript writeFile override to manage ASL transpilation
  * 
@@ -686,14 +692,43 @@ export class PackageNotFoundError extends Error {
  * @param writeByteOrderMark 
  * @returns 
  */
-function tsWriteFileOverride(this: { ASLTranspilationResults: Result<any>[] }, origWriteFile: ((fileName: string, code: string, writeByteOrderMark?: boolean) => void) | undefined, fileName: string, code: string, writeByteOrderMark?: boolean) {
+function tsWriteFileOverride(this: ASLBuilder, origWriteFile: ((fileName: string, code: string, writeByteOrderMark?: boolean) => void) | undefined, fileName: string, code: string, writeByteOrderMark?: boolean) {
     const ext = ASLPath.extname(fileName);
     switch (ext) {
     // Only treat certain output files as ASL scripts
+    case ASL_EXTENSION_JS_MAP:
     case ASL_EXTENSION_JS: {
+        // Only write file once both sourcemap and code is generated
+        // This is so that babel can remap the code as well
+        let mapCode: string | undefined;
+        let jsCode: string | undefined;
+        let fileKey: string;
+
+        if (ext === ASL_EXTENSION_JS_MAP) {
+            fileKey = fileName.slice(0, -4);
+            mapCode = code;
+            jsCode = this.ASLObjects.get(fileKey);
+        } else {
+            fileKey = fileName;
+            mapCode = this.ASLObjects.get(fileKey);
+            jsCode = code;
+        }
+
+        if (mapCode === undefined) {
+            this.ASLObjects.set(fileKey, jsCode!);
+            return;
+        } else if (jsCode === undefined) {
+            this.ASLObjects.set(fileKey, mapCode!);
+            return;
+        }
+
         // Perform transpilation
-        const babelResult = transform(code, ASLBabelConfig);
-        if (!babelResult || !babelResult.code) {
+        const babelResult = transform(jsCode, {
+            ...ASLBabelConfig,
+            sourceMaps: true,
+            inputSourceMap: JSON.parse(mapCode)
+        });
+        if (!babelResult || !babelResult.code || !babelResult.map) {
             // Error in transpilation, skip
             // TODO(randomuserhi): Better error message.
             this.ASLTranspilationResults.push(new Result(undefined, new Error("Babel Failed")));
@@ -701,10 +736,16 @@ function tsWriteFileOverride(this: { ASLTranspilationResults: Result<any>[] }, o
         }
 
         // Write file as normal, with transpiled code
-        origWriteFile?.(fileName, babelResult.code, writeByteOrderMark);
+        origWriteFile?.(fileKey, babelResult.code, writeByteOrderMark);
+
+        // Insert offset to mapping (All ASL scripts have a fixed offset due to how the script is generated via `Function` eval
+        babelResult.map.mappings = ";;" + babelResult.map.mappings;
+
+        // Write transformed source map
+        origWriteFile?.(`${fileKey}.map`, JSON.stringify(babelResult.map), writeByteOrderMark);
 
         // Push successful transpilation
-        this.ASLTranspilationResults.push(new Result(fileName));
+        this.ASLTranspilationResults.push(new Result(fileKey));
     } break;
 
         // Treat other files as normal
@@ -748,6 +789,7 @@ export class PackageWatchBuilder {
 
     /** Current list of transpilation results */
     private ASLTranspilationResults: Result<any>[] = [];
+    private ASLObjects = new Map<string, string>();
 
     /** Path to default package types */
     private readonly typeDir: string;
@@ -765,6 +807,7 @@ export class PackageWatchBuilder {
         // Clear results
         const ASLTranspilationResults = this.ASLTranspilationResults;
         this.ASLTranspilationResults = [];
+        this.ASLObjects.clear();
 
         // Report babel diagnostics regardless of build error / success
         if (diagnostic.code === 6193 || diagnostic.code === 6194) {
@@ -918,6 +961,7 @@ export class PackageBuilder {
 
     /** Current list of transpilation results */
     private ASLTranspilationResults: Result<any>[] = [];
+    private ASLObjects = new Map<string, string>();
 
     /** Path to default package types */
     private readonly typeDir: string;
@@ -940,6 +984,9 @@ export class PackageBuilder {
     /** Builds the given package */
     public async build(registry: PackageRegistry, pckgInfo: PackageInfo) {
         await initPackage(registry, pckgInfo, this.typeDir);
+
+        this.ASLTranspilationResults = [];
+        this.ASLObjects.clear();
 
         const builder = Ts.createSolutionBuilder(this.host, [pckgInfo.baseDir], {});
         builder.build();

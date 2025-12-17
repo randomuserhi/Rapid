@@ -446,7 +446,7 @@ class ASLRegistry {
                             // The function has the parameters `require`, `module` and `exports` to provide the necessary keywords.
                             //
                             // Note that `require` refers to `aslImport`, in ASL scripts the keyword is `require` for simplicity.
-                            const moduleFunc = (new Function(`return (async function(require, module, exports) {\n${code}\n}).bind(undefined); //# sourceURL=${path}`))() as ASLModuleFunc;
+                            const moduleFunc = (new Function(`return (async function(require, module, exports) {${code}\n}).bind(undefined);`))() as ASLModuleFunc;
 
                             // Create module info
                             const moduleInfo = new ASLModule(mid, path);

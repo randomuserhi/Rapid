@@ -1,5 +1,6 @@
 import FileSync from "fs";
 import File from "fs/promises";
+import Stream from "stream/promises";
 import Http from "http";
 import OS from "os";
 import Path from "path";
@@ -174,9 +175,10 @@ async function serveResource(path: string, res: Http.ServerResponse) {
     const extname: keyof typeof mimeTypes = Path.extname(path).toLowerCase() as any;
     const contentType = mimeTypes[extname] || 'application/octet-stream';
 
-    const content = await File.readFile(path);
     res.writeHead(200, { 'Content-Type': contentType });
-    res.end(content, 'utf-8');
+
+    const stream = FileSync.createReadStream(path);
+    await Stream.pipeline(stream, res);
 }
 
 /** A single app instance that represents a package */
