@@ -4,6 +4,7 @@ import FileSync from "fs";
 import File from "fs/promises";
 import Path from "path";
 import Ts from "typescript";
+import { ASL_EXTENSION_JS, ASL_EXTENSION_TS, extname } from "./ASL/ASLRuntime.cjs";
 import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
 import { Result } from "./PromiseResult.cjs";
 
@@ -45,7 +46,7 @@ function relPath(baseDir: string, path: string) {
  * Route overrides for resolving types and paths
  * Often used for interop for node_modules packages
  */
-interface PackageRoutes {
+interface PackagePathOverrides {
     types?: Ts.MapLike<string[]>;
     paths?: Ts.MapLike<string[]>;
 }
@@ -58,13 +59,13 @@ export interface PackageConfig {
     back?: {
         /** Entry point for backend scripts */
         entry?: string;
-    } & PackageRoutes;
+    } & PackagePathOverrides;
 
     /** Config for flex code */
-    flex?: PackageRoutes;
+    flex?: PackagePathOverrides;
 
     /** Config for frontend code */
-    front?: PackageRoutes;
+    front?: PackagePathOverrides;
 
     /** List of dependencies */
     dependencies?: string[];
@@ -81,59 +82,6 @@ interface TsConfig {
     include?: string[];
 }
 
-/**
- * Metadata regarding a given package
- */
-export interface PackageInfo {
-    /** package name */
-    name: string;
-
-    /** Package config information */
-    config: PackageConfig;
-
-    /** Package base directory */
-    baseDir: string;
-
-    /** Package build directory */
-    buildDir: string;
-
-    /** Package type directory */
-    typeDir: string;
-
-    /** Package flex directory */
-    flexTypeDir: string;
-
-    /** Package back directory */
-    backTypeDir: string;
-
-    /** Package front directory */
-    frontTypeDir: string;
-
-    /** Package flex directory */
-    flexDir: string;
-
-    /** Package back directory */
-    backDir: string;
-
-    /** Package front directory */
-    frontDir: string;
-
-    /** Package build flex directory */
-    flexBuildDir: string;
-
-    /** Package build back directory */
-    backBuildDir: string;
-
-    /** Package build front directory */
-    frontBuildDir: string;
-
-    /** Config path */
-    configPath: string;
-
-    /** Ts config directory */
-    TsconfigDir: string;
-}
-
 const RAPID_CONFIG_DIRNAME = "rapid.config.json";
 
 const RAPID_TSCONFIG_DIRNAME = ".tsconfig";
@@ -146,98 +94,29 @@ const RAPID_FRONT_DIRNAME = "front";
 /**
  * Manages the directories that exist in a registry and abstracts them behind
  * a single interface.
- * 
- * TODO(randomuserhi): PackageInfo should contain the parsed config file. 
- *                     The registry should caches PackageInfo objects and returns the same one to prevent reading disk all the time.
- *                     When fetching from cache, it checks if the file has been changed since last read (check file last-updated timestamp).
- *                     If it has, refetch from disk and update cache.
  */
 export class PackageRegistry {
     private readonly directories: string[];
-
-    private readonly cache = new Map<string, { info: PackageInfo, mtimeMs: number }>();
 
     constructor(directories: string[]) {
         this.directories = directories;
     }
 
-    /** Helper function that creates package info object */
-    private async createInfo(pckg: string, baseDir: string, configPath: string, configStat: FileSync.Stats): Promise<PackageInfo> {
-        // Check cache
-        let cachedInfo = this.cache.get(configPath);
-        if (cachedInfo === undefined || cachedInfo.mtimeMs < configStat.mtimeMs) {
-            cachedInfo = {
-                info: {
-                    name: pckg,
-                    config: JSON.parse(await File.readFile(configPath, "utf-8")),
-                    baseDir,
-                    buildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME),
-                    typeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME),
-                    flexTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FLEX_DIRNAME),
-                    backTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_BACK_DIRNAME),
-                    frontTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FRONT_DIRNAME),
-                    flexDir: Path.join(baseDir, RAPID_FLEX_DIRNAME),
-                    backDir: Path.join(baseDir, RAPID_BACK_DIRNAME),
-                    frontDir: Path.join(baseDir, RAPID_FRONT_DIRNAME),
-                    flexBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FLEX_DIRNAME),
-                    backBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_BACK_DIRNAME),
-                    frontBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FRONT_DIRNAME),
-                    configPath,
-                    TsconfigDir: Path.join(baseDir, RAPID_TSCONFIG_DIRNAME)
-                },
-                mtimeMs: configStat.mtimeMs
-            };
-            this.cache.set(configPath, cachedInfo);
-        }
-        return cachedInfo.info;
-    }
-
-    /** Helper function that creates package info object */
-    private createInfoSync(pckg: string, baseDir: string, configPath: string, configStat: FileSync.Stats): PackageInfo {
-        // Check cache
-        let cachedInfo = this.cache.get(configPath);
-        if (cachedInfo === undefined || cachedInfo.mtimeMs < configStat.mtimeMs) {
-            cachedInfo = {
-                info: {
-                    name: pckg,
-                    config: JSON.parse(FileSync.readFileSync(configPath, "utf-8")),
-                    baseDir,
-                    buildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME),
-                    typeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME),
-                    flexTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FLEX_DIRNAME),
-                    backTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_BACK_DIRNAME),
-                    frontTypeDir: Path.join(baseDir, RAPID_TYPES_DIRNAME, RAPID_FRONT_DIRNAME),
-                    flexDir: Path.join(baseDir, RAPID_FLEX_DIRNAME),
-                    backDir: Path.join(baseDir, RAPID_BACK_DIRNAME),
-                    frontDir: Path.join(baseDir, RAPID_FRONT_DIRNAME),
-                    flexBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FLEX_DIRNAME),
-                    backBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_BACK_DIRNAME),
-                    frontBuildDir: Path.join(baseDir, RAPID_BUILD_DIRNAME, RAPID_FRONT_DIRNAME),
-                    configPath,
-                    TsconfigDir: Path.join(baseDir, RAPID_TSCONFIG_DIRNAME)
-                },
-                mtimeMs: configStat.mtimeMs
-            };
-            this.cache.set(configPath, cachedInfo);
-        }
-        return cachedInfo.info;
-    }
-
     /**
      * Resolves a package name to its actual location on disk.
      * If there is a conflict, prioritises the first occurence. 
      * Priority is order of directories, where firstmost is given highest priority.
      * 
      * @param pckg Package name
-     * @returns Package info or undefined if the package is not found
+     * @returns Path to package config or undefined if the package is not found
      */
-    public async get(pckg: string): Promise<PackageInfo | undefined> {
+    public async findPckg(pckg: string): Promise<PackageInfo | undefined> {
         for (const dir of this.directories) {
             const baseDir = Path.resolve(Path.join(dir, pckg));
             const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
-            const pckgInfo = await this.fromConfigPath(configPath);
-            if (pckgInfo === undefined) continue;
-            return pckgInfo;
+            const configStat = await fileStat(configPath);
+            if (configStat === undefined) continue;
+            return PackageInfo.get(configPath);
         }
 
         return undefined;
@@ -249,84 +128,378 @@ export class PackageRegistry {
      * Priority is order of directories, where firstmost is given highest priority.
      * 
      * @param pckg Package name
-     * @returns Package info or undefined if the package is not found
+     * @returns Path to package config or undefined if the package is not found
      */
-    public getSync(pckg: string): PackageInfo | undefined {
+    public findPckgSync(pckg: string): PackageInfo | undefined {
         for (const dir of this.directories) {
             const baseDir = Path.resolve(Path.join(dir, pckg));
             const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
-            const pckgInfo = this.fromConfigPathSync(configPath);
-            if (pckgInfo === undefined) continue;
-            return pckgInfo;
-        }
-
-        return undefined;
-    }
-
-    /**
-     * Resolves a package from the path to its config.
-     * 
-     * @param path Path to a given package
-     * @returns Packinge info or undefined if the package is not found
-     */
-    public async fromConfigPath(path: string): Promise<PackageInfo | undefined> {
-        path = Path.resolve(path);
-
-        const basename = Path.basename(path);
-        if (basename !== RAPID_CONFIG_DIRNAME) return undefined;
-
-        const baseDir = Path.dirname(path);
-
-        const pckg = Path.basename(baseDir);
-
-        const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
-        const configStat = await fileStat(configPath);
-
-        if (configStat !== undefined && configStat.isFile()) {
-            return await this.createInfo(pckg, baseDir, configPath, configStat);
-        }
-
-        return undefined;
-    }
-
-    /**
-     * Resolves a package from the path to its config.
-     * 
-     * @param path Path to a given package
-     * @returns Packinge info or undefined if the package is not found
-     */
-    public fromConfigPathSync(path: string): PackageInfo | undefined {
-        path = Path.resolve(path);
-
-        const basename = Path.basename(path);
-        if (basename !== RAPID_CONFIG_DIRNAME) return undefined;
-
-        const baseDir = Path.dirname(path);
-
-        const pckg = Path.basename(baseDir);
-
-        const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
-        const configStat = fileStatSync(configPath);
-
-        if (configStat !== undefined && configStat.isFile()) {
-            return this.createInfoSync(pckg, baseDir, configPath, configStat);
+            const configStat = fileStatSync(configPath);
+            if (configStat === undefined) continue;
+            return PackageInfo.get(configPath);
         }
 
         return undefined;
     }
 }
 
-/**
- * Error that happens when package is not found
+/** 
+ * Config cache item used to minimize disk accesses when reading
+ * package configs from PackageInfo
  */
-export class PackageNotFoundError extends Error {
-    constructor(pckg: string) {
-        super(`Package '${pckg}' was not found.`);
-        this.name = "PackageErrorNotFound";
-        if (Error.captureStackTrace) {
-            Error.captureStackTrace(this, PackageNotFoundError);
+interface ConfigCache {
+    config: PackageConfig | undefined;
+    mtimeMs: number;
+}
+
+
+/**
+ * Metadata regarding a given package
+ */
+export class PackageInfo {
+    /** package name */
+    readonly name: string;
+
+    /** Package base directory */
+    readonly baseDir: string;
+
+    /** Package build directory */
+    readonly buildDir: string;
+
+    /** Package type directory */
+    readonly typeDir: string;
+
+    /** Package flex directory */
+    readonly flexTypeDir: string;
+
+    /** Package back directory */
+    readonly backTypeDir: string;
+
+    /** Package front directory */
+    readonly frontTypeDir: string;
+
+    /** Package flex directory */
+    readonly flexDir: string;
+
+    /** Package back directory */
+    readonly backDir: string;
+
+    /** Package front directory */
+    readonly frontDir: string;
+
+    /** Package build flex directory */
+    readonly flexBuildDir: string;
+
+    /** Package build back directory */
+    readonly backBuildDir: string;
+
+    /** Package build front directory */
+    readonly frontBuildDir: string;
+
+    /** Config path */
+    readonly configPath: string;
+
+    /** Ts config directory */
+    readonly TsconfigDir: string;
+
+    private constructor(configPath: string) {
+        this.configPath = Path.resolve(configPath);
+        this.baseDir = Path.dirname(this.configPath);
+        this.name = Path.basename(this.baseDir);
+
+        this.buildDir = Path.join(this.baseDir, RAPID_BUILD_DIRNAME);
+        this.typeDir = Path.join(this.baseDir, RAPID_TYPES_DIRNAME);
+        this.flexTypeDir = Path.join(this.baseDir, RAPID_TYPES_DIRNAME, RAPID_FLEX_DIRNAME);
+        this.backTypeDir = Path.join(this.baseDir, RAPID_TYPES_DIRNAME, RAPID_BACK_DIRNAME);
+        this.frontTypeDir = Path.join(this.baseDir, RAPID_TYPES_DIRNAME, RAPID_FRONT_DIRNAME);
+        this.flexDir = Path.join(this.baseDir, RAPID_FLEX_DIRNAME);
+        this.backDir = Path.join(this.baseDir, RAPID_BACK_DIRNAME);
+        this.frontDir = Path.join(this.baseDir, RAPID_FRONT_DIRNAME);
+        this.flexBuildDir = Path.join(this.baseDir, RAPID_BUILD_DIRNAME, RAPID_FLEX_DIRNAME);
+        this.backBuildDir = Path.join(this.baseDir, RAPID_BUILD_DIRNAME, RAPID_BACK_DIRNAME);
+        this.frontBuildDir = Path.join(this.baseDir, RAPID_BUILD_DIRNAME, RAPID_FRONT_DIRNAME);
+        this.TsconfigDir = Path.join(this.baseDir, RAPID_TSCONFIG_DIRNAME);
+    }
+
+    /** Cache of all loaded configs, used to minimize disk access */
+    private static readonly configCache = new Map<string, ConfigCache>();
+
+    /**
+     * Gets the config associated with this package
+     * 
+     * @param keepUpToDate If true, will re-parse the config if it has since been modified
+     * @returns The config object
+     */
+    public configSync(keepUpToDate: boolean = false): PackageConfig {
+        let cache = PackageInfo.configCache.get(this.configPath);
+        if (cache === undefined) {
+            cache = {
+                config: undefined,
+                mtimeMs: -1
+            };
+            PackageInfo.configCache.set(this.configPath, cache);
+        }
+
+        if (keepUpToDate || cache.config === undefined) {
+            const configStat = FileSync.statSync(this.configPath);
+            if (configStat.mtimeMs > cache.mtimeMs) {
+                cache.config = JSON.parse(FileSync.readFileSync(this.configPath, "utf-8"));
+                cache.mtimeMs = configStat.mtimeMs;
+            }
+        }
+        
+        return cache.config!;
+    }
+
+    /**
+     * Gets the config associated with this package
+     * 
+     * @param keepUpToDate If true, will re-parse the config if it has since been modified
+     * @returns The config object
+     */
+    public async config(keepUpToDate: boolean = false): Promise<PackageConfig> {
+        let cache = PackageInfo.configCache.get(this.configPath);
+        if (cache === undefined) {
+            cache = {
+                config: undefined,
+                mtimeMs: -1
+            };
+            PackageInfo.configCache.set(this.configPath, cache);
+        }
+
+        if (keepUpToDate || cache.config === undefined) {
+            const configStat = await File.stat(this.configPath);
+            if (configStat.mtimeMs > cache.mtimeMs) {
+                cache.config = JSON.parse(await File.readFile(this.configPath, "utf-8"));
+                cache.mtimeMs = configStat.mtimeMs;
+            }
+        }
+        
+        return cache.config!;
+    }
+
+    /**
+     * Cache of all info objects.
+     * This allows for a single object to be a source of truth and minimizes path operations. 
+     */
+    private static readonly cache = new Map<string, PackageInfo>();
+
+    /** Create a package info object. */
+    public static get(configPath: string): PackageInfo {
+        configPath = Path.resolve(configPath);
+
+        let cache = PackageInfo.cache.get(configPath);
+        if (cache === undefined) {
+            cache = new PackageInfo(configPath);
+            PackageInfo.cache.set(configPath, cache);
+        }
+
+        return cache;
+    }
+}
+
+/**
+ * 
+ * @param path 
+ * @param config 
+ */
+async function writeTsConfig(path: string, config: TsConfig) {
+    await File.mkdir(Path.dirname(path), { recursive: true });
+    await File.writeFile(path, JSON.stringify(config, null, 2));
+}
+
+/**
+ * 
+ * @param paths 
+ * @param key 
+ * @param value 
+ * @param browserStyle 
+ */
+function addTsPath(paths: Ts.MapLike<string[]>, key: string, value: string | string[], browserStyle: boolean) {
+    if (browserStyle && !key.startsWith("/")) {
+        key = "/" + key;
+    }
+    if (!(key in paths)) {
+        paths[key] = [];
+    }
+    if (typeof value === "string") {
+        paths[key].push(value);
+    } else {
+        paths[key].push(...value);
+    }
+}
+
+/**
+ * TODO(randomuserhi): Document
+ * @param options 
+ */
+async function generateInternalRepo(
+    rootTsConfigPath: string,
+    options: {
+        pckg: PackageInfo,
+        typeDir: string,
+        
+        /** Name of internal repo */
+        name: "back" | "flex" | "front",
+
+        /** Package dependencies */
+        additionalDependencies: PackageInfo[],
+
+        /** Merges this repo with another. You can specify which variants are shared (both repos must support the given variant) */
+        additionalIncludes: { name: "back" | "flex" | "front", variants?: string[] }[],
+        
+        /** What base libraries and types should the repo use */
+        lib?: string[],
+        types?: string[],
+
+        /** Compilation variants, to support various file types (ASL, CJS, MJS) */
+        variants: Ts.MapLike<{
+            browserStyleImports: boolean,
+            rapidLib: boolean,
+            module: string,
+            moduleResolution?: string,
+        }>
+        
+        createFolder: boolean,
+    }) {
+    const {
+        name,
+        pckg,
+        typeDir,
+        createFolder,
+        additionalDependencies,
+        additionalIncludes,
+        lib,
+        types,
+        variants
+    } = options;
+
+    const baseDir = Path.join(pckg.baseDir, name);
+    const buildDir = Path.join(pckg.buildDir, name);
+    const tsConfigDir = Path.join(pckg.TsconfigDir, name);
+
+    const writeJobs: Promise<void>[] = [];
+    
+    // base build config for supported variants to extend
+    const baseTsConfigPath = Path.join(tsConfigDir, `tsconfig.${name}.json`);
+    {
+        const config: TsConfig = {
+            extends: relPath(tsConfigDir, rootTsConfigPath),
+            compilerOptions: {
+                composite: true,
+                lib,
+                types: types?.map(p => relPath(tsConfigDir, p)),
+                rootDir: relPath(tsConfigDir, baseDir),
+                outDir: relPath(tsConfigDir, buildDir),
+                declarationDir: relPath(tsConfigDir, Path.join(pckg.baseDir, "@types", name)),
+            }
+        };
+        writeJobs.push(writeTsConfig(baseTsConfigPath, config));
+    }
+
+    // add self to includes
+    const includes = [{ name, variants: Object.keys(variants) }, ...additionalIncludes];
+
+    // Build reference list
+    // Note, only from additional dependencies, although we implicitly
+    // depend on self to preven typescript circular reference.
+    const references: Ts.ProjectReference[] = [];
+    for (const dependency of additionalDependencies) {
+        for (const include of includes) {
+            const supportedVariants = include.variants ?? Object.keys(variants);
+            for (const variant of supportedVariants) {
+                references.push({ path: relPath(tsConfigDir, Path.join(dependency.TsconfigDir, include.name, `tsconfig${variant}.json`)) });
+            }
         }
     }
+
+    // Add additional includes to reference list
+    for (const include of additionalIncludes) {
+        references.push({ path: relPath(tsConfigDir, Path.join(pckg.TsconfigDir, include.name, `tsconfig${ASL_EXTENSION_TS}.json`)) });
+    }
+
+    // add self to dependencies
+    const dependencies = [pckg, ...additionalDependencies];
+
+    // Build variant configs
+    for (const variant in variants) {
+        const {
+            browserStyleImports,
+            rapidLib,
+            module,
+            moduleResolution
+        } = variants[variant];
+
+        const supportedIncludes = includes.filter(include => include.variants === undefined || include.variants.includes(variant));
+
+        // build paths
+        const paths: Ts.MapLike<string[]> = {};
+
+        // browsers require URL's so root imports don't work
+        if (!browserStyleImports) {
+            addTsPath(paths, "*", relPath(tsConfigDir, Path.join(pckg.baseDir, name, "*")), browserStyleImports);
+        }
+
+        // standard library paths
+        if (rapidLib) {
+            addTsPath(paths, "rapid", relPath(tsConfigDir, Path.join(typeDir, "rapid", name, "rapid.d.ts")), browserStyleImports);
+            addTsPath(paths, "rapid/*", relPath(tsConfigDir, Path.join(typeDir, "rapid", name, "lib", "*")), browserStyleImports);
+        }
+
+        // add dependency type paths
+        for (const dependency of dependencies) {
+            const dependentConfig = dependency.configSync();
+
+            for (const include of supportedIncludes) {
+                addTsPath(paths, `${dependency.name}/*`, relPath(tsConfigDir, Path.join(dependency.baseDir, include.name, "*")), browserStyleImports);
+            }
+
+            const pathOverrides: PackagePathOverrides | undefined = (dependentConfig as any)[name];
+            if (pathOverrides !== undefined && pathOverrides.types !== undefined) {
+                const types = pathOverrides.types;
+                for (let key in types) {
+                    const values = types[key].map(p => relPath(tsConfigDir, Path.resolve(dependency.baseDir, p)));
+                    key = (key === "/" || key === "") ? dependency.name : `${dependency.name}${key.startsWith("/") ? "" : "/"}${key}`;
+                    addTsPath(paths, key, values, browserStyleImports);
+                }
+            }
+        }
+
+        const config: TsConfig = {
+            extends: relPath(tsConfigDir, baseTsConfigPath),
+            compilerOptions: {
+                module: module as any,
+                moduleResolution: moduleResolution as any,
+                tsBuildInfoFile: relPath(tsConfigDir, Path.join(buildDir, `${variant}.tsbuildinfo`)),
+                paths
+            },
+            include: [],
+            references
+        };
+        for (const include of supportedIncludes) {
+            const includeDir = Path.join(pckg.baseDir, include.name);
+            config.include!.push(Path.join(relPath(tsConfigDir, includeDir), `**/*${variant}`));
+        }
+        writeJobs.push(writeTsConfig(Path.join(tsConfigDir, `tsconfig${variant}.json`), config));
+    }
+
+    // Generate local tsconfig for vscode
+    if (createFolder) {
+        const config: TsConfig = {
+            files: [],
+            compilerOptions: {
+                composite: true,
+                tsBuildInfoFile: Path.join(relPath(baseDir, pckg.buildDir), `.${name}.tsbuildinfo`)
+            },
+            references: []
+        };
+        for (const variant in variants) {
+            config.references!.push({ "path": relPath(baseDir, Path.join(tsConfigDir, `tsconfig${variant}.json`)) });
+        }
+        writeJobs.push(writeTsConfig(Path.join(baseDir, "tsconfig.json"), config));
+    }
+
+    await Promise.all(writeJobs);
 }
 
 /**
@@ -337,30 +510,19 @@ export class PackageNotFoundError extends Error {
  * @param typeDir Path to default types for packages
  */
 async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir: string) {
-    /**
-     * Packages are made up of 3 repositories (repos):
-     * - back => This is for backend code that runs on NodeJS
-     * - front => This is for frontend code that runs on browser
-     * - flex => This is for code that can run in both backend or frontend
-     * 
-     * A package must contain atleast one of these sub-repos.
-     */
-
     // Get the package config
-    const config = info.config;
-
-    // Generate configs
+    const config = await info.config(true);
 
     // Resolve dependency paths
     const dependencies: PackageInfo[] = [];
     if (config.dependencies !== undefined) {
         const jobs: Promise<void>[] = [];
-
-        // TODO(randomuserhi): Make dependencies an array not a k,v pair
+    
         for (const dependency of config.dependencies) {
-            if (dependency === info.name) continue; // Skip dependency on self
-
-            jobs.push(registry.get(dependency)
+            // Skip dependency on self, this is implicit
+            if (dependency === info.name) continue;
+    
+            jobs.push(registry.findPckg(dependency)
                 .then(info => {
                     if (info !== undefined) {
                         dependencies.push(info);
@@ -368,7 +530,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 })
             );
         }
-
+    
         await Promise.all(jobs);
     }
 
@@ -384,23 +546,23 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
     };
     // Add sub-repos as reference for typescript to build them as required
     if (config.back !== undefined) {
-        tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, "tsconfig.asl.json")) });
-        tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, "tsconfig.cjs.json")) });
-        tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, "tsconfig.mjs.json")) });
+            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, `tsconfig${ASL_EXTENSION_TS}.json`)) });
+            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, "tsconfig.cts.json")) });
+            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, "tsconfig.mts.json")) });
     }
     if (config.front !== undefined) {
-        tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FRONT_DIRNAME, "tsconfig.asl.json")) });
-        tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FRONT_DIRNAME, "tsconfig.mjs.json")) });
+            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FRONT_DIRNAME, `tsconfig${ASL_EXTENSION_TS}.json`)) });
+            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FRONT_DIRNAME, "tsconfig.mts.json")) });
     }
     if (config.flex !== undefined) {
-        tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
+            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, `tsconfig${ASL_EXTENSION_TS}.json`)) });
     }
     await File.writeFile(tsconfigPath, JSON.stringify(tsconfig, null, 2));
-
+    
     // Generate config folder which holds all auto-generated configs for each sub-repo
     const tsconfigDir = info.TsconfigDir;
     await File.mkdir(tsconfigDir, { recursive: true });
-
+    
     // Generate base config if it doesn't exist
     // This contains optional typescript settings the user can configure
     const tsconfigBasePath = Path.join(tsconfigDir, "tsconfig.base.json");
@@ -420,502 +582,133 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 sourceMap: false
             }
         };
-
+    
         await File.writeFile(tsconfigBasePath, JSON.stringify(tsconfigBase, null, 2));
     }
 
-    // TODO(randomuserhi): Clean up below repo generation
-
-    // Flex Repo
-    {
-        const createRepo = config.flex !== undefined;
-        const repo = RAPID_FLEX_DIRNAME;
-        const repoDir = info.flexDir;
-
-        const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-
-        // Make the directory
-        if (createRepo) await File.mkdir(repoDir, { recursive: true });
-        // Make config folder
-        await File.mkdir(repoTsconfigDir, { recursive: true });
-
-        // Build directories
-        const repoBuildDir = info.flexBuildDir;
-        const repoTypeDir = info.flexTypeDir;
-
-        // Build config paths
-        const repoTsconfigPath = Path.join(repoTsconfigDir, `tsconfig.${repo}.json`);
-        const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
-        const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
-
-        // Root tsconfig
-        const repoTsconfigRoot: TsConfig = {
-            files: [],
-            compilerOptions: {
-                composite: true,
-                tsBuildInfoFile: Path.join(relPath(repoDir, info.buildDir), `.${repo}.tsbuildinfo`)
-            },
-            references: [
-                { "path": relPath(repoDir, repoTsconfigASLPath) }
-            ]
-        };
-        if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
-
-        // Repo config
-        const repoTsconfig: TsConfig = {
-            extends: relPath(repoTsconfigDir, tsconfigBasePath),
-            compilerOptions: {
-                composite: true,
-                lib: [
-                    "ES2022",
-                    "DOM"
-                ],
-                types: [],
-                rootDir: relPath(repoTsconfigDir, repoDir),
-                outDir: relPath(repoTsconfigDir, repoBuildDir),
-                declarationDir: relPath(repoTsconfigDir, repoTypeDir),
-                paths: {
-                    "*": [
-                        Path.join(relPath(repoTsconfigDir, repoDir), "*")
-                    ]
+    // Generate repos
+    await Promise.all([
+        generateInternalRepo(tsconfigBasePath, {
+            name: "flex",
+            // TODO(randomuserhi): Flex shouldn't allow DOM libraries such as document etc..., 
+            //                     but it needs stuff like AbortController and console.log
+            //                     need to find out how to properly handle this
+            lib: ["ES2022", "DOM"],
+            pckg: info,
+            typeDir,
+            createFolder: config.flex !== undefined,
+            additionalDependencies: dependencies,
+            additionalIncludes: [],
+            variants: {
+                [ASL_EXTENSION_TS]: {
+                    browserStyleImports: false,
+                    rapidLib: false,
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
                 }
             }
-        };
-        
-        const paths = repoTsconfig.compilerOptions!.paths!;
-
-        {
-            paths[`${info.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
-            ];
-
-            // Parse and manage dependency type paths
-            const dependentConfig = info.config;
-            if (dependentConfig.flex !== undefined && dependentConfig.flex.types !== undefined) {
-                const types = dependentConfig.flex.types;
-                for (const k in types) {
-                    const key = k === "/" ? info.name : `${info.name}${k}`;
-                    if (!(key in paths)) paths[key] = [];
-                    for (const path of types[k]) {
-                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
-                    }
-                }
-            }
-        }
-
-        // Add dependency paths
-        const references: Ts.ProjectReference[] = [];
-        for (const dependency of dependencies) {
-            paths[`${dependency.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(dependency.flexTypeDir, "*"))
-            ];
-
-            // Parse and manage dependency type paths
-            const dependentConfig = dependency.config;
-            if (dependentConfig.flex !== undefined && dependentConfig.flex.types !== undefined) {
-                const types = dependentConfig.flex.types;
-                for (const k in types) {
-                    const key = k === "/" ? dependency.name : `${dependency.name}${k}`;
-                    if (!(key in paths)) paths[key] = [];
-                    for (const path of types[k]) {
-                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
-                    }
-                }
-            }
-
-            // Push build reference
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.asl.json")) });
-        }
-
-        await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
-
-        // ASL tsconfig
-        const repoTsconfigASL: TsConfig = {
-            extends: relPath(repoTsconfigDir, repoTsconfigPath),
-            compilerOptions: {
-                module: Ts.ModuleKind[Ts.ModuleKind.ES2022] as any,
-                tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".asl.tsbuildinfo")),
-            },
-            include: [
-                Path.join(relPath(repoTsconfigDir, repoDir), "**/*.ts")
+        }),
+        generateInternalRepo(tsconfigBasePath, {
+            name: "back",
+            lib: ["ES2022", "DOM"],
+            types: [
+                Path.join(typeDir, "node")
             ],
-            references
-        };
-        await File.writeFile(repoTsconfigASLPath, JSON.stringify(repoTsconfigASL, null, 2));
+            pckg: info,
+            typeDir,
+            createFolder: config.back !== undefined,
+            additionalDependencies: dependencies,
+            additionalIncludes: [{ name: "flex", variants: [ ASL_EXTENSION_TS ] }],
+            variants: {
+                [ASL_EXTENSION_TS]: {
+                    browserStyleImports: false,
+                    rapidLib: true,
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
+                },
+                ".cts": {
+                    browserStyleImports: false,
+                    rapidLib: true,
+                    module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
+                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext]
+                },
+                ".mts": {
+                    browserStyleImports: false,
+                    rapidLib: true,
+                    module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
+                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext]
+                }
+            }
+        }),
+        generateInternalRepo(tsconfigBasePath, {
+            name: "front",
+            pckg: info,
+            typeDir,
+            createFolder: config.front !== undefined,
+            additionalDependencies: dependencies,
+            additionalIncludes: [{ name: "flex", variants: [ ASL_EXTENSION_TS ] }],
+            variants: {
+                [ASL_EXTENSION_TS]: {
+                    browserStyleImports: false,
+                    rapidLib: true,
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
+                },
+                ".mts": {
+                    browserStyleImports: true,
+                    rapidLib: true,
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
+                }
+            }
+        })
+    ]);
+}
+
+/**
+ * Error that happens when package is not found
+ */
+export class PackageNotFoundError extends Error {
+    constructor(pckg: string) {
+        super(`Package '${pckg}' was not found.`);
+        this.name = "PackageErrorNotFound";
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, PackageNotFoundError);
+        }
     }
+}
 
-    // Back Repo
-    {
-        const createRepo = config.back !== undefined;
-        const repo = RAPID_BACK_DIRNAME;
-        const repoDir = info.backDir;
-
-        const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-
-        // Make the directory
-        if (createRepo) await File.mkdir(repoDir, { recursive: true });
-        // Make config folder
-        await File.mkdir(repoTsconfigDir, { recursive: true });
-
-        // Build directories
-        const repoBuildDir = info.backBuildDir;
-        const repoTypeDir = info.backTypeDir;
-
-        // Build config paths
-        const repoTsconfigPath = Path.join(repoTsconfigDir, `tsconfig.${repo}.json`);
-        const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
-        const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
-        const repoTsconfigCtsPath = Path.join(repoTsconfigDir, "tsconfig.cjs.json");
-        const repoTsconfigMtsPath = Path.join(repoTsconfigDir, "tsconfig.mjs.json");
-
-        // Root tsconfig
-        const repoTsconfigRoot: TsConfig = {
-            files: [],
-            compilerOptions: {
-                composite: true,
-                tsBuildInfoFile: Path.join(relPath(repoDir, info.buildDir), `.${repo}.tsbuildinfo`)
-            },
-            references: [
-                { "path": relPath(repoDir, repoTsconfigASLPath) },
-                { "path": relPath(repoDir, repoTsconfigCtsPath) },
-                { "path": relPath(repoDir, repoTsconfigMtsPath) }
-            ]
-        };
-        if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
-
-        // Repo config
-        const repoTsconfig: TsConfig = {
-            extends: relPath(repoTsconfigDir, tsconfigBasePath),
-            compilerOptions: {
-                composite: true,
-                lib: [
-                    "ES2022"
-                ],
-                types: [
-                    relPath(repoTsconfigDir, Path.join(typeDir, "node"))
-                ],
-                rootDir: relPath(repoTsconfigDir, repoDir),
-                outDir: relPath(repoTsconfigDir, repoBuildDir),
-                declarationDir: relPath(repoTsconfigDir, repoTypeDir),
-                paths: {
-                    "*": [
-                        Path.join(relPath(repoTsconfigDir, repoDir), "*")
-                    ],
-                    "rapid": [
-                        relPath(repoTsconfigDir, Path.join(typeDir, "rapid", RAPID_BACK_DIRNAME, "rapid.d.ts"))
-                    ],
-                    "rapid/*": [
-                        relPath(repoTsconfigDir, Path.join(typeDir, "rapid", RAPID_BACK_DIRNAME, "lib", "*"))
-                    ]
-                }
-            }
-        };
-
-        const paths = repoTsconfig.compilerOptions!.paths!;
-        
-        {
-            paths[`${info.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(info.backTypeDir, "*")),
-                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
-            ];
-
-            // Parse and manage dependency type paths
-            const dependentConfig = info.config;
-            if (dependentConfig.back !== undefined && dependentConfig.back.types !== undefined) {
-                const types = dependentConfig.back.types;
-                for (const k in types) {
-                    const key = k === "/" ? info.name : `${info.name}${k}`;
-                    if (!(key in paths)) paths[key] = [];
-                    for (const path of types[k]) {
-                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
-                    }
-                }
-            }
-        }
-        
-        // Add dependency paths
-        const references: Ts.ProjectReference[] = [];
-        for (const dependency of dependencies) {
-            paths[`${dependency.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(dependency.backTypeDir, "*")),
-                relPath(repoTsconfigDir, Path.join(dependency.flexTypeDir, "*"))
-            ];
-
-            // Parse and manage dependency type paths
-            const dependentConfig = dependency.config;
-            if (dependentConfig.back !== undefined && dependentConfig.back.types !== undefined) {
-                const types = dependentConfig.back.types;
-                for (const k in types) {
-                    const key = k === "/" ? dependency.name : `${dependency.name}${k}`;
-                    if (!(key in paths)) paths[key] = [];
-                    for (const path of types[k]) {
-                        paths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
-                    }
-                }
-            }
-
-            // Push build references
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.asl.json")) });
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.mjs.json")) });
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.cjs.json")) });
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
+/**
+ * Typescript writeFile override to manage ASL transpilation
+ * 
+ * @param this 
+ * @param origWriteFile 
+ * @param fileName 
+ * @param code 
+ * @param writeByteOrderMark 
+ * @returns 
+ */
+function tsWriteFileOverride(this: { ASLTranspilationResults: Result<any>[] }, origWriteFile: ((fileName: string, code: string, writeByteOrderMark?: boolean) => void) | undefined, fileName: string, code: string, writeByteOrderMark?: boolean) {
+    const ext = extname(fileName);
+    switch (ext) {
+    // Only treat certain output files as ASL scripts
+    case ASL_EXTENSION_JS: {
+        // Perform transpilation
+        const babelResult = transform(code, ASLBabelConfig);
+        if (!babelResult || !babelResult.code) {
+            // Error in transpilation, skip
+            // TODO(randomuserhi): Better error message.
+            this.ASLTranspilationResults.push(new Result(undefined, new Error("Babel Failed")));
+            return;
         }
 
-        // Add flex folder as dependency
-        repoTsconfig.compilerOptions!.paths!["*"].push(Path.join(relPath(repoTsconfigDir, info.flexDir), "*"));
-        references.push({ path: relPath(repoTsconfigDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
+        // Write file as normal, with transpiled code
+        origWriteFile?.(fileName, babelResult.code, writeByteOrderMark);
 
-        await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
+        // Push successful transpilation
+        this.ASLTranspilationResults.push(new Result(fileName));
+    } break;
 
-        // ASL tsconfig
-        const repoTsconfigASL: TsConfig = {
-            extends: relPath(repoTsconfigDir, repoTsconfigPath),
-            compilerOptions: {
-                module: Ts.ModuleKind[Ts.ModuleKind.ES2022] as any,
-                tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".asl.tsbuildinfo")),
-            },
-            include: [
-                Path.join(relPath(repoTsconfigDir, repoDir), "**/*.ts"),
-                Path.join(relPath(repoTsconfigDir, info.flexDir), "**/*.ts")
-            ],
-            references
-        };
-        await File.writeFile(repoTsconfigASLPath, JSON.stringify(repoTsconfigASL, null, 2));
-
-        // CTS tsconfig
-        const repoTsconfigCts: TsConfig = {
-            extends: relPath(repoTsconfigDir, repoTsconfigPath),
-            compilerOptions: {
-                module: Ts.ModuleKind[Ts.ModuleKind.NodeNext] as any,
-                moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext] as any,
-                tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".cjs.tsbuildinfo")),
-            },
-            include: [
-                Path.join(relPath(repoTsconfigDir, repoDir), "**/*.cts"),
-                Path.join(relPath(repoTsconfigDir, info.flexDir), "**/*.cts")
-            ],
-            references
-        };
-
-        await File.writeFile(repoTsconfigCtsPath, JSON.stringify(repoTsconfigCts, null, 2));
-
-        // MTS tsconfig
-        const repoTsconfigMts: TsConfig = {
-            extends: relPath(repoTsconfigDir, repoTsconfigPath),
-            compilerOptions: {
-                module: Ts.ModuleKind[Ts.ModuleKind.NodeNext] as any,
-                moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext] as any,
-                tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".mjs.tsbuildinfo")),
-            },
-            include: [
-                Path.join(relPath(repoTsconfigDir, repoDir), "**/*.mts"),
-                Path.join(relPath(repoTsconfigDir, info.flexDir), "**/*.cts")
-            ],
-            references
-        };
-
-        await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));
-    }
-
-    // Front Repo
-    {
-        const createRepo = config.front !== undefined;
-        const repo = RAPID_FRONT_DIRNAME;
-        const repoDir = info.frontDir;
-
-        const repoTsconfigDir = Path.join(tsconfigDir, `${repo}`);
-
-        // Make the directory
-        if (createRepo) await File.mkdir(repoDir, { recursive: true });
-        // Make config folder
-        await File.mkdir(repoTsconfigDir, { recursive: true });
-
-        // Build directories
-        const repoBuildDir = info.frontBuildDir;
-        const repoTypeDir = info.frontTypeDir;
-
-        // Build config paths
-        const repoTsconfigPath = Path.join(repoTsconfigDir, `tsconfig.${repo}.json`);
-        const repoTsconfigRootPath = Path.join(repoDir, "tsconfig.json");
-        const repoTsconfigASLPath = Path.join(repoTsconfigDir, "tsconfig.asl.json");
-        const repoTsconfigMtsPath = Path.join(repoTsconfigDir, "tsconfig.mjs.json");
-
-        // Root tsconfig
-        const repoTsconfigRoot: TsConfig = {
-            files: [],
-            compilerOptions: {
-                composite: true,
-                tsBuildInfoFile: Path.join(relPath(repoDir, info.buildDir), `.${repo}.tsbuildinfo`)
-            },
-            references: [
-                { "path": relPath(repoDir, repoTsconfigASLPath) },
-                { "path": relPath(repoDir, repoTsconfigMtsPath) }
-            ]
-        };
-        if (createRepo) await File.writeFile(repoTsconfigRootPath, JSON.stringify(repoTsconfigRoot, null, 2));
-
-        // Repo config
-        const repoTsconfig: TsConfig = {
-            extends: relPath(repoTsconfigDir, tsconfigBasePath),
-            compilerOptions: {
-                composite: true,
-                lib: [
-                    "ES2022",
-                    "DOM"
-                ],
-                types: [],
-                rootDir: relPath(repoTsconfigDir, repoDir),
-                outDir: relPath(repoTsconfigDir, repoBuildDir),
-                declarationDir: relPath(repoTsconfigDir, repoTypeDir)
-            }
-        };
-
-        // Browsers resolve paths differently, so we need to split path resolution
-        // into ASL and MTS.
-        //
-        // On MTS (browsers), paths need to be URLs, hence they start with "/" prefix.
-        // ASL does not require this.
-
-        const aslPaths: Ts.MapLike<string[]> = {
-            "*": [
-                Path.join(relPath(repoTsconfigDir, repoDir), "*")
-            ],
-            "rapid": [
-                relPath(repoTsconfigDir, Path.join(typeDir, "rapid", RAPID_FRONT_DIRNAME, "rapid.d.ts"))
-            ],
-            "rapid/*": [
-                relPath(repoTsconfigDir, Path.join(typeDir, "rapid", RAPID_FRONT_DIRNAME, "lib", "*"))
-            ]
-        };
-
-        const mtsPaths: Ts.MapLike<string[]> = {
-            "/rapid": [
-                relPath(repoTsconfigDir, Path.join(typeDir, "rapid", RAPID_FRONT_DIRNAME, "rapid.d.ts"))
-            ],
-            "/rapid/*": [
-                relPath(repoTsconfigDir, Path.join(typeDir, "rapid", RAPID_FRONT_DIRNAME, "lib", "*"))
-            ]
-        };
-
-        {
-            aslPaths[`${info.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(info.frontTypeDir, "*")),
-                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
-            ];
-            mtsPaths[`/${info.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(info.frontTypeDir, "*")),
-                relPath(repoTsconfigDir, Path.join(info.flexTypeDir, "*"))
-            ];
-
-            // Parse and manage dependency type paths
-            const dependentConfig = info.config;
-            if (dependentConfig.front !== undefined && dependentConfig.front.types !== undefined) {
-                const types = dependentConfig.front.types;
-                for (const k in types) {
-                    {
-                        const key = k === "/" ? info.name : `${info.name}${k}`;
-
-                        if (!(key in aslPaths)) aslPaths[key] = [];
-                        for (const path of types[k]) {
-                            aslPaths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
-                        }
-                    }
-
-                    {
-                        const key = k === "/" ? `/${info.name}` : `/${info.name}${k}`;
-
-                        if (!(key in mtsPaths)) mtsPaths[key] = [];
-                        for (const path of types[k]) {
-                            mtsPaths[key].push(relPath(repoTsconfigDir, Path.resolve(info.baseDir, path)));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add dependency paths
-        const references: Ts.ProjectReference[] = [];
-        for (const dependency of dependencies) {
-            aslPaths[`${dependency.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(dependency.frontTypeDir, "*")),
-                relPath(repoTsconfigDir, Path.join(dependency.flexTypeDir, "*"))
-            ];
-            mtsPaths[`/${dependency.name}/*`] = [
-                relPath(repoTsconfigDir, Path.join(dependency.frontTypeDir, "*")),
-                relPath(repoTsconfigDir, Path.join(dependency.flexTypeDir, "*"))
-            ];
-
-            // Parse and manage dependency type paths
-            const dependentConfig = dependency.config;
-            if (dependentConfig.front !== undefined && dependentConfig.front.types !== undefined) {
-                const types = dependentConfig.front.types;
-                for (const k in types) {
-                    {
-                        const key = k === "/" ? dependency.name : `${dependency.name}${k}`;
-
-                        if (!(key in aslPaths)) aslPaths[key] = [];
-                        for (const path of types[k]) {
-                            aslPaths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
-                        }
-                    }
-
-                    {
-                        const key = k === "/" ? `/${dependency.name}` : `/${dependency.name}${k}`;
-
-                        if (!(key in mtsPaths)) mtsPaths[key] = [];
-                        for (const path of types[k]) {
-                            mtsPaths[key].push(relPath(repoTsconfigDir, Path.resolve(dependency.baseDir, path)));
-                        }
-                    }
-                }
-            }
-
-            //
-
-            // Push build references
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.asl.json")) });
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, repo, "tsconfig.mjs.json")) });
-            references.push({ path: relPath(repoTsconfigDir, Path.join(dependency.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
-        }
-
-        // Add flex folder as dependency
-        aslPaths["*"].push(Path.join(relPath(repoTsconfigDir, info.flexDir), "*"));
-        references.push({ path: relPath(repoTsconfigDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, "tsconfig.asl.json")) });
-
-        await File.writeFile(repoTsconfigPath, JSON.stringify(repoTsconfig, null, 2));
-
-        // ASL tsconfig
-        const repoTsconfigASL: TsConfig = {
-            extends: relPath(repoTsconfigDir, repoTsconfigPath),
-            compilerOptions: {
-                module: Ts.ModuleKind[Ts.ModuleKind.ES2022] as any,
-                tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".asl.tsbuildinfo")),
-                paths: aslPaths
-            },
-            include: [
-                Path.join(relPath(repoTsconfigDir, repoDir), "**/*.ts"),
-                Path.join(relPath(repoTsconfigDir, info.flexDir), "**/*.ts")
-            ],
-            references
-        };
-        await File.writeFile(repoTsconfigASLPath, JSON.stringify(repoTsconfigASL, null, 2));
-
-        // MTS tsconfig
-        const repoTsconfigMts: TsConfig = {
-            extends: relPath(repoTsconfigDir, repoTsconfigPath),
-            compilerOptions: {
-                module: Ts.ModuleKind[Ts.ModuleKind.ES2022] as any,
-                tsBuildInfoFile: relPath(repoTsconfigDir, Path.join(repoBuildDir, ".mjs.tsbuildinfo")),
-                paths: mtsPaths
-            },
-            include: [
-                Path.join(relPath(repoTsconfigDir, repoDir), "**/*.mts"),
-                Path.join(relPath(repoTsconfigDir, info.flexDir), "**/*.mts")
-            ],
-            references
-        };
-
-        await File.writeFile(repoTsconfigMtsPath, JSON.stringify(repoTsconfigMts, null, 2));
+        // Treat other files as normal
+    default: {
+        origWriteFile?.(fileName, code, writeByteOrderMark);
+    } break;
     }
 }
 
@@ -945,6 +738,9 @@ export class PackageWatchBuilder {
     /** Babel Diagnostic callback */
     public reportBabelDiagnostic: ((ASLTranspilationResults: Result<any>[]) => void) | undefined;
 
+    /** Babel Diagnostic callback */
+    public reportWatchStatus: Ts.WatchStatusReporter | undefined;
+
     /** Callback triggered when all files are built, provides a list of ASL scripts that were transpiled for this build */
     public onIncrementalBuild: ((ASLFiles: string[]) => void) | undefined;
 
@@ -961,7 +757,7 @@ export class PackageWatchBuilder {
     private readonly registry: PackageRegistry;
 
     // Watch Typescript build status to trigger onIncrementalBuild callback
-    private reportWatchStatus(diagnostic: Ts.Diagnostic, newLine: string, options: Ts.CompilerOptions, errorCount?: number) {
+    private internalReportWatchStatus(diagnostic: Ts.Diagnostic, newLine: string, options: Ts.CompilerOptions, errorCount?: number) {
         // Refer to https://github.com/microsoft/TypeScript/issues/32542
 
         // Clear results
@@ -986,6 +782,8 @@ export class PackageWatchBuilder {
                 this.onIncrementalBuild?.(paths);
             }
         }
+
+        this.reportWatchStatus?.(diagnostic, newLine, options, errorCount);
     }
 
     constructor(registry: PackageRegistry, typeDir: string) {
@@ -1014,38 +812,12 @@ export class PackageWatchBuilder {
             Ts.createSemanticDiagnosticsBuilderProgram,
             (...args: Parameters<Ts.DiagnosticReporter>) => this.reportDiagnostic?.(...args),
             (...args: Parameters<Ts.DiagnosticReporter>) => this.reportSolutionBuilderStatus?.(...args),
-            this.reportWatchStatus.bind(this)
+            this.internalReportWatchStatus.bind(this)
         );
 
         // Overwrite writeFile behaviour to transpile asl files
         const origWriteFile = this.watchHost.writeFile;
-        this.watchHost.writeFile = (fileName, code, writeByteOrderMark) => {
-            const extname = Path.extname(fileName);
-            switch (extname) {
-            // Only treat`.js` output files as ASL scripts
-            case ".js": {
-                // Perform transpilation
-                const babelResult = transform(code, ASLBabelConfig);
-                if (!babelResult || !babelResult.code) {
-                    // Error in transpilation, skip and push error result
-                    // TODO(randomuserhi): Better error message.
-                    this.ASLTranspilationResults.push(new Result(undefined, new Error("Babel Failed")));
-                    return;
-                }
-
-                // Push successful transpilation result
-                this.ASLTranspilationResults.push(new Result(fileName));
-
-                // Write file as normal, with transpiled code
-                origWriteFile?.(fileName, babelResult.code, writeByteOrderMark);
-            } break;
-
-                // Treat other files as normal
-            default: {
-                origWriteFile?.(fileName, code, writeByteOrderMark);
-            } break;
-            }
-        };
+        this.watchHost.writeFile = tsWriteFileOverride.bind(this as any, origWriteFile);
 
         // Cleanup watchers properly on program end
 
@@ -1103,13 +875,10 @@ export class PackageWatchBuilder {
         this.configWatcher.on("change", async (configPath) => {
             this.stop(); // Stop builds temporarily while re-initializing package
 
-            const info = await this.registry.fromConfigPath(configPath);
-            if (info !== undefined) {
-                try {
-                    await initPackage(this.registry, info, this.typeDir);
-                } catch (err) {
-                    console.error(err);
-                }
+            try {
+                await initPackage(this.registry, PackageInfo.get(configPath), this.typeDir);
+            } catch (err) {
+                console.error(err);
             }
 
             this.start(this.watchList); // Start builds again
@@ -1163,30 +932,7 @@ export class PackageBuilder {
 
         // Overwrite writeFile behaviour to transpile asl files
         const origWriteFile = this.host.writeFile;
-        this.host.writeFile = (fileName, code, writeByteOrderMark) => {
-            const extname = Path.extname(fileName);
-            switch (extname) {
-            // Only treat`.js` output files as ASL scripts
-            case ".js": {
-                // Perform transpilation
-                const babelResult = transform(code, ASLBabelConfig);
-                if (!babelResult || !babelResult.code) {
-                    // Error in transpilation, skip
-                    // TODO(randomuserhi): Better error message.
-                    this.ASLTranspilationResults.push(new Result(undefined, new Error("Babel Failed")));
-                    return;
-                }
-
-                // Write file as normal, with transpiled code
-                origWriteFile?.(fileName, babelResult.code, writeByteOrderMark);
-            } break;
-
-                // Treat other files as normal
-            default: {
-                origWriteFile?.(fileName, code, writeByteOrderMark);
-            } break;
-            }
-        };
+        this.host.writeFile = tsWriteFileOverride.bind(this as any, origWriteFile);
     }
 
     /** Builds the given package */
@@ -1195,87 +941,5 @@ export class PackageBuilder {
 
         const builder = Ts.createSolutionBuilder(this.host, [pckgInfo.baseDir], {});
         builder.build();
-    }
-}
-
-
-/**
- * Manages packages within a registry
- */
-export class PackageManager_DEPRECATED {
-    private readonly registry: PackageRegistry;
-
-    private readonly typeDir: string;
-
-    public readonly watchBuilder: PackageWatchBuilder;
-    public readonly builder: PackageBuilder;
-
-    private watchList: PackageInfo[] = [];
-
-    /**
-     * 
-     * @param registry Registry of packages
-     * @param typeDir Directory of standard library types such as "@types/node"
-     */
-    constructor(registry: PackageRegistry, typeDir: string) {
-        this.registry = registry;
-        this.typeDir = typeDir;
-
-        this.watchBuilder = new PackageWatchBuilder(registry, this.typeDir);
-        this.builder = new PackageBuilder(this.typeDir);
-    }
-
-    /** Adds a package to watch list - automatically makes the package and builds it on changes. */
-    public async watch(pckg: PackageInfo): Promise<void>
-
-    /** Adds a package to watch list - automatically makes the package and builds it on changes. */
-    public async watch(pckg: string): Promise<void>
-
-    public async watch(pckg: string | PackageInfo) {
-        let pckgInfo: string | PackageInfo | undefined = pckg;
-        if (typeof pckgInfo === "string") {
-            const pckgName = pckgInfo;
-            pckgInfo = await this.registry.get(pckgInfo);
-            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName);
-        }
-
-        const index = this.watchList.findIndex((info) => info.baseDir === pckgInfo.baseDir);
-        if (index < 0) {
-            this.watchBuilder.stop();
-            this.watchList.push(pckgInfo);
-            this.watchBuilder.start(this.watchList);
-        }
-    }
-
-    /** Removes a package from the watch list */
-    public async unwatch(pckg: string) {
-        const pckgInfo = await this.registry.get(pckg);
-        if (pckgInfo === undefined) throw new PackageNotFoundError(pckg);
-
-        const index = this.watchList.findIndex((info) => info.baseDir === pckgInfo.baseDir);
-        if (index >= 0) {
-            this.watchBuilder.stop();
-            this.watchList.splice(index, 1);
-            this.watchBuilder.start(this.watchList);
-        }
-    }
-
-    /** Builds the given package */
-    public async build(pckg: PackageInfo): Promise<void>
-
-    /** Builds the given package */
-    public async build(pckg: string): Promise<void>
-
-    public async build(pckg: string | PackageInfo) {
-        let pckgInfo: string | PackageInfo | undefined = pckg;
-        if (typeof pckgInfo === "string") {
-            const pckgName = pckgInfo;
-            pckgInfo = await this.registry.get(pckgInfo);
-            if (pckgInfo === undefined) throw new PackageNotFoundError(pckgName);
-        }
-
-        this.watchBuilder.stop();
-        this.builder.build(this.registry, pckgInfo);
-        this.watchBuilder.start(this.watchList);
     }
 }

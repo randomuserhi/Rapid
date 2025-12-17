@@ -19,26 +19,16 @@ function isPathSeparator(code: number) {
 }
 
 /**
- * Replicates behaviour of `path.extname`
- * 
- * From the NodeJS Library https://github.com/nodejs/node/blob/896b75a4da58a7283d551c4595e0aa454baca3e0/lib/path.js
+ * Obtain the location of the extension name for a path
  * 
  * @param path Path
  * @returns File extension
  */
-/**
- * Replicates behaviour of `path.extname`
- * 
- * From the NodeJS Library https://github.com/nodejs/node/blob/896b75a4da58a7283d551c4595e0aa454baca3e0/lib/path.js
- * 
- * @param path Path
- * @returns File extension
- */
-export function extname(path: string) {
+function findExtname(path: string): { start: number, end: number } | undefined {
     if (typeof path !== "string") {
         throw new TypeError(`The "path" argument must be of type string. Received type ${typeof path}`);
     }
-    let startDot = -1;
+    let start = -1;
     let end = -1;
     let matchedSlash = true;
     // Track the state of characters (if any) we see before our first dot and
@@ -66,24 +56,48 @@ export function extname(path: string) {
         if (code === CHAR_DOT) {
             // Check we did not see 2 dots in a row and that there
             // are characters prior the first dot
-            if (preDotState !== 0 && startDot !== i + 1) {
-                startDot = i;
+            if (preDotState !== 0 && start !== i + 1) {
+                start = i;
             } else {
                 break;
             }
-        } else if (startDot === -1) {
+        } else if (start === -1) {
             // We saw a non-dot and non-path separator before our dot, so we should
             // have a good chance at having a non-empty extension
             preDotState = -1;
         }
     }
-    if (startDot === -1 ||
+    if (start === -1 ||
         end === -1 ||
         // We saw a non-dot character immediately before the dot
         preDotState === 0) {
-        return "";
+        return undefined;
     }
-    return path.slice(startDot, end);
+    return {
+        start,
+        end
+    };
+}
+
+/**
+ * Obtain extension name from path
+ * 
+ * @param path Path
+ * @returns File extension
+ */
+export function extname(path: string) {
+    const location = findExtname(path);
+    if (location === undefined) return "";
+    return path.slice(location.start, location.end);
+}
+
+/** Fixes file paths that end in ".asl" to ".asl.js" for convenience */
+export function fixASLPath(path: string): string {
+    const location = findExtname(path);
+    if (location === undefined) return path;
+    
+    if (path.slice(location.start, location.end) !== ".asl") return path;
+    return `${path.slice(0, location.start)}${ASL_EXTENSION_JS}${path.slice(location.end)}`;
 }
 
 /**

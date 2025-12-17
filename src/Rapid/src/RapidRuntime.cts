@@ -3,8 +3,9 @@ import File from "fs/promises";
 import Http from "http";
 import OS from "os";
 import Path from "path";
-import { ASLEnvironment, ASLModule, ASLModuleObject, registry } from "./ASL/ASLRuntime.cjs";
-import { PackageBuilder, PackageConfig, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
+import type { MapLike } from "typescript";
+import { ASLEnvironment, ASLModule, ASLModuleObject, fixASLPath, registry } from "./ASL/ASLRuntime.cjs";
+import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 
 /** Probes the file system to determine if it is case sensitive or not */
 function isFileSystemCaseSensitive() {
@@ -23,7 +24,81 @@ function isFileSystemCaseSensitive() {
 /** Flag for if file system is case sensitive or not */
 const CASE_SENSITIVE_FS = isFileSystemCaseSensitive();
 
+/** Helper that determines if a file exists or not */
 const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
+
+const CHAR_FORWARD_SLASH = 47; /* / */
+
+/**
+ * Normalizes a path for pattern matching
+ * 
+ * @param path 
+ */
+export function normalizePathPattern(path: string) {
+    if (path !== "") {
+        path = Path.normalize(path).replaceAll("\\", "/");
+        if (path.endsWith("/")) path = path.slice(0, -1);
+        if (!path.startsWith("/")) path = "/" + path;
+    } else {
+        path = "/";
+    }
+    return path;
+}
+
+/**
+ * Helper function that finds matching file prefixes
+ * 
+ * @param path The path to match
+ * @param patterns Map of patterns to be matched
+ * @returns Matched pattern and postfix path
+ */
+export function filePrefixMatch(path: string, patterns: MapLike<string[]>): { pattern: string, postfix: string } | undefined {
+    path = normalizePathPattern(path);
+
+    let longestMatch = -1;
+    let matchedPattern: { pattern: string, postfix: string } | undefined = undefined;
+    for (const pattern in patterns) {
+        let prefix = normalizePathPattern(pattern);
+        let postfix = "";
+
+        let isMatch = false;
+        if (prefix === "/") {
+            isMatch = path === "/";
+        } else if (prefix === "/*") {
+            prefix = "/";
+            isMatch = path !== "/";
+            postfix = path;
+        } else {
+            if (prefix.endsWith("/*")) {
+                prefix = prefix.slice(0, -1);
+                isMatch = path.startsWith(prefix);
+                postfix = path.slice(prefix.length);
+            } else {
+                isMatch = prefix === path;
+            }
+        }
+
+        let length = 0;
+        let isBlank = false;
+        for (let i = 0; i < prefix.length; ++i) {
+            const code = prefix.charCodeAt(i);
+
+            if (code === CHAR_FORWARD_SLASH) {
+                isBlank = true;
+            } else if (isBlank) {
+                ++length;
+                isBlank = false;
+            }
+        }
+
+        if (isMatch && length > longestMatch) {
+            longestMatch = length;
+            matchedPattern = { pattern, postfix };
+        }
+    }
+
+    return matchedPattern;
+}
 
 /**  */
 type RestMethod = "GET" | "POST";
@@ -54,6 +129,7 @@ const mimeTypes = {
     '.svg': 'application/image/svg+xml'
 } as const;
 
+/** */
 class RapidLib {
     /** Package */
     private readonly app: RapidApp;
@@ -81,6 +157,16 @@ class RapidLib {
     }
 }
 
+/** TODO(randomuserhi): Move into some http helper script */
+async function serveResource(path: string, res: Http.ServerResponse) {
+    const extname: keyof typeof mimeTypes = Path.extname(path).toLowerCase() as any;
+    const contentType = mimeTypes[extname] || 'application/octet-stream';
+
+    const content = await File.readFile(path);
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(content, 'utf-8');
+}
+
 /** A single app instance that represents a package */
 export class RapidApp {
     /** The runtime this app is part of */
@@ -98,9 +184,19 @@ export class RapidApp {
     /** RapidLib object */
     private rapidLib: RapidLib;
 
+    /** List of static paths to check */
+    private staticFrontPaths: string[];
+
     constructor(runtime: RapidRuntime, pckgInfo: PackageInfo) {
         this.runtime = runtime;
         this.pckgInfo = pckgInfo;
+
+        this.staticFrontPaths = [
+            this.pckgInfo.frontBuildDir,
+            this.pckgInfo.frontDir,
+            this.pckgInfo.flexBuildDir,
+            this.pckgInfo.flexDir
+        ];
 
         // Create rapid lib object
         this.rapidLib = new RapidLib(this);
@@ -112,7 +208,7 @@ export class RapidApp {
 
     /** Import hook to resolve ASL environment paths */
     private async aslImportHook(module: ASLModule, path: string): Promise<string | ASLModuleObject> {
-        path = Path.normalize(path);
+        path = fixASLPath(Path.normalize(path));
 
         const {
             baseDir,
@@ -199,7 +295,7 @@ export class RapidApp {
             const parts = path.split(Path.sep);
             const pckgName = parts[0];
 
-            const pckgInfo = await this.runtime.packageRegistry.get(pckgName);
+            const pckgInfo = await this.runtime.packageRegistry.findPckg(pckgName);
             if (pckgInfo !== undefined) {
                 const {
                     backDir,
@@ -207,75 +303,40 @@ export class RapidApp {
                     flexDir,
                     flexBuildDir
                 } = pckgInfo;
-
+                
                 // Trim the package name from the path
                 path = Path.relative(pckgName, path);
-
+                
                 if (path !== "") {
                     // Check if it is in build folder first
                     let resolvedPath = Path.join(backBuildDir, path);
                     if (await fileExists(resolvedPath)) return resolvedPath;
-
+                    
                     // Otherwise check base folder
                     resolvedPath = Path.join(backDir, path);
                     if (await fileExists(resolvedPath)) return resolvedPath;
-
+                    
                     // Otherwise check flex build folder
                     resolvedPath = Path.join(flexBuildDir, path);
                     if (await fileExists(resolvedPath)) return resolvedPath;
-
+                    
                     // Otherwise check flex folder
                     resolvedPath = Path.join(flexDir, path);
                     if (await fileExists(resolvedPath)) return resolvedPath;
                 }
 
+                const config = await pckgInfo.config(this.runtime.isWatching(this.pckgInfo));
+
                 // Otherwise check package paths
-                if (pckgInfo.config.back?.paths !== undefined) {
-                    const paths = pckgInfo.config.back.paths;
-
-                    path.replaceAll("\\", "/");
-
-                    let length = 0;
-                    let match: { paths: string[], path: string } | undefined = undefined;
-                    for (const k in paths) {
-                        let pattern = k;
-                        let isMatch = false;
-                        let matchedPath = path;
-                        if (pattern === "/") {
-                            isMatch = path === "";
-                        } else {
-                            if (pattern.endsWith("/*")) {
-                                pattern = pattern.slice(0, -1);
-                            }
-
-                            if (pattern.endsWith("/")) {
-                                isMatch = path.startsWith(pattern);
-                                matchedPath = path.replace(pattern, "");
-                            } else {
-                                isMatch = pattern === path;
-                            }
-                        }
-
-                        const size = pattern.split("/").length - ((pattern.startsWith("/") || pattern.startsWith("./")) ? 1 : 0);
-                        if (isMatch && size > length) {
-                            length = size;
-                            match = {
-                                paths: paths[k],
-                                path: matchedPath
-                            };
-                        }
-                    }
-
+                if (config.back?.paths !== undefined) {
+                    const paths = config.back.paths;
+                    const match = filePrefixMatch(path, paths);
                     if (match !== undefined) {
-                        for (let p of match.paths) {
-                            if (p.endsWith("/*")) {
-                                p = p.slice(0, -1);
-                            }
-
-                            if (p.endsWith("/")) {
-                                resolvedPath = Path.join(baseDir, p, match.path);
+                        for (const path of paths[match.pattern]) {
+                            if (Path.basename(path) === "*") {
+                                resolvedPath = Path.join(baseDir, Path.dirname(path), match.postfix);
                             } else {
-                                resolvedPath = Path.join(baseDir, p);
+                                resolvedPath = Path.join(baseDir, path);
                             }
                             if (await fileExists(resolvedPath)) return resolvedPath;
                         }
@@ -289,10 +350,10 @@ export class RapidApp {
 
     /** Loads and runs the package's entry point */
     public async loadEntry() {
-        const config: PackageConfig = JSON.parse(await File.readFile(this.pckgInfo.configPath, "utf-8"));
+        const config = await this.pckgInfo.config(this.runtime.isWatching(this.pckgInfo));
         let entryPoint = config.back?.entry;
         if (entryPoint !== undefined) {
-            entryPoint = Path.join(this.pckgInfo.baseDir, ".build", "back", entryPoint);
+            entryPoint = Path.join(this.pckgInfo.baseDir, ".build", "back", fixASLPath(entryPoint));
             await this.environment.fetch(entryPoint);
         }
     }
@@ -308,102 +369,54 @@ export class RapidApp {
                 return;
             }
         }
+    
+        let resourcePath: string | undefined = undefined;
 
-        // If no handler is found, try to find resource from "front" directory
-        let resourcePath = Path.join(this.pckgInfo.frontBuildDir, req.url!);
-        if (!await fileExists(resourcePath) || req.url! === "/") {
-            // If its not in the build directory, check base directory
-            resourcePath = Path.join(this.pckgInfo.frontDir, req.url!);
-            if (!await fileExists(resourcePath) || req.url! === "/") {
-                // Otherwise check flex directories
-                resourcePath = Path.join(this.pckgInfo.flexBuildDir, req.url!);
-                if (!await fileExists(resourcePath) || req.url! === "/") {
-                    resourcePath = Path.join(this.pckgInfo.flexDir, req.url!);
-                    // Finally check package path mappings
-                    if ((!await fileExists(resourcePath) || req.url! === "/")) {
-                        this.pckgInfo = (await this.runtime.packageRegistry.get(this.pckgInfo.name))!;
+        try {
+            if (req.url !== "/") {
+            // Look for resource through static path list
+                for (const prefix of this.staticFrontPaths) {
+                    resourcePath = Path.join(prefix, req.url!);
 
-                        if (this.pckgInfo.config.front?.paths !== undefined) {
-                            const paths = this.pckgInfo.config.front.paths;
+                    if (await fileExists(resourcePath)) {
+                        await serveResource(resourcePath, res);
+                        return;
+                    }
+                }
+            }
 
-                            const path = req.url!;
+            // See if the config has a match for it
+            const config = await this.pckgInfo.config(this.runtime.isWatching(this.pckgInfo));
+            if (config.front?.paths !== undefined) {
+                const paths = config.front.paths;
+                const match = filePrefixMatch(req.url!, paths);
+                if (match !== undefined) {
+                    for (const path of paths[match.pattern]) {
+                        if (Path.basename(path) === "*") {
+                            resourcePath = Path.join(this.pckgInfo.baseDir, Path.dirname(path), match.postfix);
+                        } else {
+                            resourcePath = Path.join(this.pckgInfo.baseDir, path);
+                        }
 
-                            let length = 0;
-                            let match: { paths: string[], path: string } | undefined = undefined;
-                            for (const k in paths) {
-                                let pattern = k;
-                                let isMatch = false;
-                                let matchedPath = path;
-                                if (pattern === "/") {
-                                    isMatch = path === "/";
-                                } else {
-                                    if (pattern.endsWith("/*")) {
-                                        pattern = pattern.slice(0, -1);
-                                    }
-
-                                    if (pattern.endsWith("/")) {
-                                        isMatch = path.startsWith(pattern);
-                                        matchedPath = path.replace(pattern, "");
-                                    } else {
-                                        isMatch = pattern === path;
-                                    }
-                                }
-
-                                const size = pattern.split("/").length - ((pattern.startsWith("/") || pattern.startsWith("./")) ? 1 : 0);
-                                if (isMatch && size > length) {
-                                    length = size;
-                                    match = {
-                                        paths: paths[k],
-                                        path: matchedPath
-                                    };
-                                }
-                            }
-
-                            if (match !== undefined) {
-                                for (let p of match.paths) {
-                                    if (p.endsWith("/*")) {
-                                        p = p.slice(0, -1);
-                                    }
-
-                                    if (p.endsWith("/")) {
-                                        resourcePath = Path.join(this.pckgInfo.baseDir, p, match.path);
-                                    } else {
-                                        resourcePath = Path.join(this.pckgInfo.baseDir, p);
-                                    }
-                                    if (await fileExists(resourcePath)) break;
-                                }
-                            }
+                        if (await fileExists(resourcePath)) {
+                            await serveResource(resourcePath, res);
+                            return;
                         }
                     }
                 }
             }
-        }
-
-        if (!await fileExists(resourcePath)) {
-            // Otherwise return 404 not found
-            res.statusCode = 404;
-            res.end("Not Found");
-            return;
-        }
-
-        // Serve resource
-
-        const extname: keyof typeof mimeTypes = Path.extname(resourcePath).toLowerCase() as any;
-        const contentType = mimeTypes[extname] || 'application/octet-stream';
-
-        try {
-            const content = await File.readFile(resourcePath);
-            res.writeHead(200, { 'Content-Type': contentType });
-            res.end(content, 'utf-8');
         } catch (err) {
             res.statusCode = 500;
             res.end("Error 500");
             console.error(`${req.url} > ${resourcePath}: `, err);
         }
+
+        // Otherwise return 404 not found
+        res.statusCode = 404;
+        res.end("Not Found");
     }
 }
 
-/** Rapid Runtime */
 export class RapidRuntime {
     /** Stores currently running app instances */
     private instances = new Map<string, RapidApp>();
@@ -438,12 +451,12 @@ export class RapidRuntime {
     private async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
         // TODO(randomuserhi): Implement redirect on basic case for "/"
         //                     User can specify what they want for the default app
-
+    
         // Special case for fetching from Rapid standard library (front end)
         if (req.url!.toLowerCase().startsWith("/rapid")) {
             // Get url relative to rapid directory
             let url = new URL(req.url!.replace("/rapid", ""), "https://localhost/").pathname;
-
+    
             // Resolve resource path
             let resourcePath;
             if (url === "/" || url === "/.mjs") {
@@ -452,24 +465,19 @@ export class RapidRuntime {
                 if (Path.extname(url) === "") url += ".mjs"; // By default assume `.mjs` extension
                 resourcePath = Path.join(__dirname, "RapidWebLib/lib", url);
             }
-
+    
             // Serve resource
-
-            const extname: keyof typeof mimeTypes = Path.extname(resourcePath).toLowerCase() as any;
-            const contentType = mimeTypes[extname] || 'application/octet-stream';
-
             try {
-                const content = await File.readFile(resourcePath);
-                res.writeHead(200, { 'Content-Type': contentType });
-                res.end(content, 'utf-8');
+                await serveResource(resourcePath, res);
             } catch (err) {
                 res.statusCode = 500;
                 res.end("Error 500");
                 console.error(`${req.url} > ${resourcePath}: `, err);
             }
+
             return;
         }
-
+    
         // Obtain package from request
         const parts = req.url!.split("/");
         if (parts.length < 2) {
@@ -484,60 +492,68 @@ export class RapidRuntime {
             res.end();
             return;
         }
-
+    
         const pckgPathPrefix = `/${parts[1]}`;
-
+    
         let pckgName = decodeURI(parts[1]);
-
+    
         // if file system is not case sensitive, resolve package names as always lower-case
         if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
-
+    
         if (pckgName === "") {
             res.statusCode = 404;
             res.end("Not valid URL");
             return;
         }
-
+    
         let instance = this.instances.get(pckgName);
         if (instance === undefined) {
-            const pckgInfo = await this.packageRegistry.get(pckgName);
+            const pckgInfo = await this.packageRegistry.findPckg(pckgName);
             if (pckgInfo === undefined) {
                 res.statusCode = 404;
                 res.end("Not valid package");
                 return;
             }
-
+    
             // Auto watch launched apps
             this.watch(pckgInfo.name);
-
+    
             // Launch app instance
             instance = new RapidApp(this, pckgInfo);
             await instance.loadEntry();
-
+    
             this.instances.set(pckgName, instance);
         }
-
+    
         // Pass request onto the given package
         req.url = new URL(req.url!.replace(pckgPathPrefix, ""), "https://localhost/").pathname;
         instance.onRequest(req, res);
     }
 
+    public isWatching(pckg: PackageInfo) {
+        return this.watchList.has(pckg.configPath);
+    }
+
     public watch(pckg: string) {
-        if (this.watchList.has(pckg)) return;
-
-        const info = this.packageRegistry.getSync(pckg);
-        if (info === undefined) return;
-
-        this.watchList.set(pckg, info);
+        const pckgInfo = this.packageRegistry.findPckgSync(pckg);
+        if (pckgInfo === undefined) return;
+        
+        if (this.watchList.has(pckgInfo.configPath)) return;
+    
+        this.watchList.set(pckgInfo.configPath, pckgInfo);
         this.packageWatchBuilder.start([...this.watchList.values()]);
     }
-
+    
     public unwatch(pckg: string) {
-        if (!this.watchList.has(pckg)) return;
-        this.watchList.delete(pckg);
+        const pckgInfo = this.packageRegistry.findPckgSync(pckg);
+        if (pckgInfo === undefined) return;
+
+        if (!this.watchList.has(pckgInfo.configPath)) return;
+
+        this.watchList.delete(pckgInfo.configPath);
         this.packageWatchBuilder.start([...this.watchList.values()]);
     }
-
+    
     public listen(port: number): Promise<void> {
         return new Promise((resolve) => {
             Http.createServer(this.onRequest.bind(this)).listen(port, resolve);
