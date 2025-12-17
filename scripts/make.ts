@@ -43,8 +43,8 @@ try {
 
     console.log("\nGenerate Registry Types...");
 
-    const typesFolder = "E:\\Git\\RapidRegistry\\@types";
-    //const typesFolder = "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\@types";
+    const typesFolder = "E:\\Git\\RapidRegistry\\lib";
+    //const typesFolder = "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\lib";
     await rm(typesFolder, { recursive: true, force: true });
 
     await mkdir(typesFolder);
