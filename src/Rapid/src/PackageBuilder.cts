@@ -4,7 +4,7 @@ import FileSync from "fs";
 import File from "fs/promises";
 import Path from "path";
 import Ts from "typescript";
-import { ASL_EXTENSION_JS, ASL_EXTENSION_TS, extname } from "./ASL/ASLRuntime.cjs";
+import { ASL_EXTENSION_JS, ASL_EXTENSION_TS, ASLPath } from "./ASL/ASLRuntime.cjs";
 import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
 import { Result } from "./PromiseResult.cjs";
 
@@ -111,6 +111,8 @@ export class PackageRegistry {
      * @returns Path to package config or undefined if the package is not found
      */
     public async findPckg(pckg: string): Promise<PackageInfo | undefined> {
+        if (pckg === "") return undefined;
+
         for (const dir of this.directories) {
             const baseDir = Path.resolve(Path.join(dir, pckg));
             const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
@@ -685,7 +687,7 @@ export class PackageNotFoundError extends Error {
  * @returns 
  */
 function tsWriteFileOverride(this: { ASLTranspilationResults: Result<any>[] }, origWriteFile: ((fileName: string, code: string, writeByteOrderMark?: boolean) => void) | undefined, fileName: string, code: string, writeByteOrderMark?: boolean) {
-    const ext = extname(fileName);
+    const ext = ASLPath.extname(fileName);
     switch (ext) {
     // Only treat certain output files as ASL scripts
     case ASL_EXTENSION_JS: {

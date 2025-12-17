@@ -85,20 +85,67 @@ function findExtname(path: string): { start: number, end: number } | undefined {
  * @param path Path
  * @returns File extension
  */
-export function extname(path: string) {
+function extname(path: string) {
     const location = findExtname(path);
     if (location === undefined) return "";
     return path.slice(location.start, location.end);
 }
 
 /** Fixes file paths that end in ".asl" to ".asl.js" for convenience */
-export function fixASLPath(path: string): string {
+function fixASLExt(path: string): string {
     const location = findExtname(path);
     if (location === undefined) return path;
     
     if (path.slice(location.start, location.end) !== ".asl") return path;
     return `${path.slice(0, location.start)}${ASL_EXTENSION_JS}${path.slice(location.end)}`;
 }
+
+/** Find package name from an import path */
+function findPckgName(path: string): { start: number, end: number } | undefined {
+    let start = -1;
+    let end = 0;
+    let validCharacters = false;
+    let separatorCount = 0;
+    for (; end < path.length; ++end) {
+        const code = path.charCodeAt(end);
+        if (code !== 47) {
+            if (!validCharacters) start = end;
+            validCharacters = true;
+        } else if (validCharacters || ++separatorCount > 1) {
+            break;
+        }
+    }
+    if (start === -1) return undefined;
+    return { start, end };
+}
+
+/** Gets package name from an import path */
+function pckgName(path: string): string {
+    const location = findPckgName(path);
+    if (location === undefined) return "";
+    return path.slice(location.start, location.end);
+}
+
+function endsWithSeparator(path: string): boolean {
+    const code = path.charCodeAt(path.length - 1);
+    return isPathSeparator(code);
+}
+
+function startsWithSeparator(path: string): boolean {
+    if (path.length === 0) return false;
+    const code = path.charCodeAt(0);
+    return isPathSeparator(code);
+}
+
+export const ASLPath = {
+    pckgName,
+    extname,
+    fixASLExt,
+    findExtname,
+    findPckgName,
+    endsWithSeparator,
+    startsWithSeparator
+};
 
 /**
  * Stores a reference to a value.

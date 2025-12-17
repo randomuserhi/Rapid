@@ -4,7 +4,7 @@ import Http from "http";
 import OS from "os";
 import Path from "path";
 import type { MapLike } from "typescript";
-import { ASLEnvironment, ASLModule, ASLModuleObject, fixASLPath, registry } from "./ASL/ASLRuntime.cjs";
+import { ASLEnvironment, ASLModule, ASLModuleObject, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 
 /** Probes the file system to determine if it is case sensitive or not */
@@ -34,11 +34,11 @@ const CHAR_FORWARD_SLASH = 47; /* / */
  * 
  * @param path 
  */
-export function normalizePathPattern(path: string) {
-    if (path !== "") {
+function normalizePathPattern(path: string) {
+    if (path.length !== 0) {
         path = Path.normalize(path).replaceAll("\\", "/");
-        if (path.endsWith("/")) path = path.slice(0, -1);
-        if (!path.startsWith("/")) path = "/" + path;
+        if (path.codePointAt(path.length - 1) === CHAR_FORWARD_SLASH) path = path.slice(0, -1);
+        if (path.codePointAt(0) !== CHAR_FORWARD_SLASH) path = "/" + path;
     } else {
         path = "/";
     }
@@ -52,7 +52,7 @@ export function normalizePathPattern(path: string) {
  * @param patterns Map of patterns to be matched
  * @returns Matched pattern and postfix path
  */
-export function filePrefixMatch(path: string, patterns: MapLike<string[]>): { pattern: string, postfix: string } | undefined {
+function filePrefixMatch(path: string, patterns: MapLike<string[]>): { pattern: string, postfix: string } | undefined {
     path = normalizePathPattern(path);
 
     let longestMatch = -1;
@@ -141,6 +141,18 @@ class RapidLib {
     }
 
     public resolve(path: string): ASLModuleObject {
+        // strip ".js" and ".cjs" extension from path
+        if (!ASLPath.endsWithSeparator(path)) {
+            const extLoc = ASLPath.findExtname(path);
+            if (extLoc !== undefined) {
+                const ext = path.slice(extLoc.start, extLoc.end);
+                switch (ext) {
+                case ".cjs":
+                case ".js": path = path.slice(0, extLoc.start); break;
+                }
+            }
+        }
+
         let obj = this.cache.get(path);
         if (obj === undefined) {
             if (path === "rapid") {
@@ -208,7 +220,7 @@ export class RapidApp {
 
     /** Import hook to resolve ASL environment paths */
     private async aslImportHook(module: ASLModule, path: string): Promise<string | ASLModuleObject> {
-        path = fixASLPath(Path.normalize(path));
+        path = ASLPath.fixASLExt(Path.normalize(path));
 
         const {
             baseDir,
@@ -265,8 +277,8 @@ export class RapidApp {
             // Since module resolution is typically handled by unix paths, convert backslash to unix style slashes
             path = path.replace("\\", "/");
 
-            // Resolve rapidlib paths:
-            if (path.startsWith("rapid")) {
+            // Special case for rapidlib:
+            if (ASLPath.pckgName(path) === "rapid") {
                 return this.rapidLib.resolve(path);
             }
 
@@ -275,25 +287,13 @@ export class RapidApp {
         } else {
             // Resolve absolute paths
 
-            // Check if it is in build folder first
-            let resolvedPath = Path.join(backBuildDir, path);
-            if (await fileExists(resolvedPath)) return resolvedPath;
-
-            // Otherwise check base folder
-            resolvedPath = Path.join(backDir, path);
-            if (await fileExists(resolvedPath)) return resolvedPath;
-
-            // Otherwise check flex build folder
-            resolvedPath = Path.join(flexBuildDir, path);
-            if (await fileExists(resolvedPath)) return resolvedPath;
-
-            // Otherwise check flex folder
-            resolvedPath = Path.join(flexDir, path);
-            if (await fileExists(resolvedPath)) return resolvedPath;
-
             // Check package path (if it is a dependency import)
-            const parts = path.split(Path.sep);
-            const pckgName = parts[0];
+            const pckgName = ASLPath.pckgName(path);
+
+            // Special case for rapidlib:
+            if (pckgName === "rapid") {
+                return this.rapidLib.resolve(path);
+            }
 
             const pckgInfo = await this.runtime.packageRegistry.findPckg(pckgName);
             if (pckgInfo !== undefined) {
@@ -333,6 +333,7 @@ export class RapidApp {
                     const match = filePrefixMatch(path, paths);
                     if (match !== undefined) {
                         for (const path of paths[match.pattern]) {
+                            let resolvedPath: string;
                             if (Path.basename(path) === "*") {
                                 resolvedPath = Path.join(baseDir, Path.dirname(path), match.postfix);
                             } else {
@@ -353,28 +354,29 @@ export class RapidApp {
         const config = await this.pckgInfo.config(this.runtime.isWatching(this.pckgInfo));
         let entryPoint = config.back?.entry;
         if (entryPoint !== undefined) {
-            entryPoint = Path.join(this.pckgInfo.baseDir, ".build", "back", fixASLPath(entryPoint));
+            entryPoint = Path.join(this.pckgInfo.baseDir, ".build", "back", ASLPath.fixASLExt(entryPoint));
             await this.environment.fetch(entryPoint);
         }
     }
 
     /** Handle requests for the given App */
     public async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
-        // Trigger any handlers
-        const group = this.routes.get(req.method! as RestMethod);
-        if (group !== undefined) {
-            const route = group.get(req.url!);
-            if (route !== undefined) {
-                route.handler(req, res);
-                return;
-            }
-        }
-    
         let resourcePath: string | undefined = undefined;
 
         try {
+            // Trigger any handlers
+            const group = this.routes.get(req.method! as RestMethod);
+            if (group !== undefined) {
+                const route = group.get(req.url!);
+                if (route !== undefined) {
+                    route.handler(req, res);
+                    return;
+                }
+            }
+    
+            // Locate package resource
             if (req.url !== "/") {
-            // Look for resource through static path list
+                // Look for resource through static path list
                 for (const prefix of this.staticFrontPaths) {
                     resourcePath = Path.join(prefix, req.url!);
 
@@ -405,15 +407,15 @@ export class RapidApp {
                     }
                 }
             }
+
+            // Otherwise return 404 not found
+            res.statusCode = 404;
+            res.end("Not Found");
         } catch (err) {
             res.statusCode = 500;
-            res.end("Error 500");
-            console.error(`${req.url} > ${resourcePath}: `, err);
+            res.end("Internal Package Error");
+            console.error(err);
         }
-
-        // Otherwise return 404 not found
-        res.statusCode = 404;
-        res.end("Not Found");
     }
 }
 
@@ -449,85 +451,91 @@ export class RapidRuntime {
     }
 
     private async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
-        // TODO(randomuserhi): Implement redirect on basic case for "/"
-        //                     User can specify what they want for the default app
-    
-        // Special case for fetching from Rapid standard library (front end)
-        if (req.url!.toLowerCase().startsWith("/rapid")) {
-            // Get url relative to rapid directory
-            let url = new URL(req.url!.replace("/rapid", ""), "https://localhost/").pathname;
-    
-            // Resolve resource path
-            let resourcePath;
-            if (url === "/" || url === "/.mjs") {
-                resourcePath = Path.join(__dirname, "RapidWebLib", "rapid.mjs");
-            } else {
-                if (Path.extname(url) === "") url += ".mjs"; // By default assume `.mjs` extension
-                resourcePath = Path.join(__dirname, "RapidWebLib/lib", url);
-            }
-    
-            // Serve resource
-            try {
-                await serveResource(resourcePath, res);
-            } catch (err) {
-                res.statusCode = 500;
-                res.end("Error 500");
-                console.error(`${req.url} > ${resourcePath}: `, err);
-            }
+        try {
+            // TODO(randomuserhi): Implement redirect on basic case for "/"
+            //                     User can specify what they want for the default app
 
-            return;
-        }
-    
-        // Obtain package from request
-        const parts = req.url!.split("/");
-        if (parts.length < 2) {
-            res.statusCode = 404;
-            res.end("Not valid URL");
-            return;
-        } else if (parts.length === 2) {
-            // Redirect "localhost:3000/pckg" links to "localhost:3000/pckg/" otherwise relative imports fail:
-            // <script src="./script.js"> on "localhost:3000/pckg" resolves to "localhost:3000/script.js"
-            // but on "localhost:3000/pckg/" it resolves to "localhost:3000/pckg/script.js" properly
-            res.writeHead(302, { Location: `${req.url!}/` });
-            res.end();
-            return;
-        }
-    
-        const pckgPathPrefix = `/${parts[1]}`;
-    
-        let pckgName = decodeURI(parts[1]);
-    
-        // if file system is not case sensitive, resolve package names as always lower-case
-        if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
-    
-        if (pckgName === "") {
-            res.statusCode = 404;
-            res.end("Not valid URL");
-            return;
-        }
-    
-        let instance = this.instances.get(pckgName);
-        if (instance === undefined) {
-            const pckgInfo = await this.packageRegistry.findPckg(pckgName);
-            if (pckgInfo === undefined) {
+            const pckgNameLocation = ASLPath.findPckgName(req.url!);
+            if (pckgNameLocation === undefined) {
                 res.statusCode = 404;
-                res.end("Not valid package");
+                res.end("Not valid URL");
+                return;
+            }
+        
+            let pckgName = decodeURI(req.url!.slice(pckgNameLocation.start, pckgNameLocation.end));
+            const pckgUrl = req.url!.slice(pckgNameLocation.end);
+
+            // Manage rapid standard library
+            let rapidLibResource: string | undefined = undefined;
+
+            // Special case for root of standard library
+            if (pckgName === "rapid.mjs" && pckgUrl === "") {
+                rapidLibResource = Path.join(__dirname, "RapidWebLib", "rapid.mjs");
+            } else {
+                if (pckgUrl === "") {
+                    // Redirect "localhost:3000/pckg" links to "localhost:3000/pckg/" otherwise relative imports fail:
+                    // <script src="./script.js"> on "localhost:3000/pckg" resolves to "localhost:3000/script.js"
+                    // but on "localhost:3000/pckg/" it resolves to "localhost:3000/pckg/script.js" properly
+                    res.writeHead(302, { Location: `${pckgName}/` });
+                    res.end();
+                    return;
+                }
+            
+                // Handle standard library routes 
+                if (pckgName === "rapid") {
+                    if (pckgUrl === "/") {
+                        // TODO(randomuserhi): Special case for `/rapid` URL which should go to
+                        //                     an internal website or readme (not 404)
+                        res.statusCode = 404;
+                        res.end("Not Found");
+                        return;
+                    }
+
+                    rapidLibResource = Path.join(__dirname, "RapidWebLib/lib", decodeURI(pckgUrl));
+                }
+            }
+            // Serve standard library resource if resolved, otherwise continue to regular package logic
+            if (rapidLibResource !== undefined) {
+                if (await fileExists(rapidLibResource)) {
+                    await serveResource(rapidLibResource, res);
+                } else {
+                    res.statusCode = 404;
+                    res.end("Not Found");
+                }
                 return;
             }
     
-            // Auto watch launched apps
-            this.watch(pckgInfo.name);
+            // if file system is not case sensitive, resolve package names as always lower-case
+            if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
     
-            // Launch app instance
-            instance = new RapidApp(this, pckgInfo);
-            await instance.loadEntry();
+            let instance = this.instances.get(pckgName);
+            if (instance === undefined) {
+                const pckgInfo = await this.packageRegistry.findPckg(pckgName);
+                if (pckgInfo === undefined) {
+                    res.statusCode = 404;
+                    res.end("Not valid package");
+                    return;
+                }
     
-            this.instances.set(pckgName, instance);
+                // Auto watch launched apps
+                this.watch(pckgInfo.name);
+    
+                // Launch app instance
+                instance = new RapidApp(this, pckgInfo);
+                await instance.loadEntry();
+    
+                this.instances.set(pckgName, instance);
+            }
+    
+            // Pass request onto the given package
+            req.url = pckgUrl;
+            instance.onRequest(req, res);
+        } catch (err) {
+            res.statusCode = 500;
+            res.end("Internal Server Error");
+            console.error(err);
+            return;
         }
-    
-        // Pass request onto the given package
-        req.url = new URL(req.url!.replace(pckgPathPrefix, ""), "https://localhost/").pathname;
-        instance.onRequest(req, res);
     }
 
     public isWatching(pckg: PackageInfo) {
