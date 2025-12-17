@@ -23,7 +23,8 @@
     "@babel/preset-env": "^7.28.3",
     "@babel/template": "^7.27.2",
     "chokidar": "^4.0.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/babel__core": "^7.20.5",
