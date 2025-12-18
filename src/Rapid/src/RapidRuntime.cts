@@ -4,6 +4,7 @@ import Http from "http";
 import OS from "os";
 import Path from "path";
 import Stream from "stream/promises";
+import { WebSocketServer } from "ws";
 import { MapLike } from "typescript";
 import { ASLEnvironment, ASLModule, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
@@ -440,6 +441,20 @@ export class RapidRuntime {
     /** Builder for building packages without watcher */
     public readonly packageBuilder: PackageBuilder;
 
+    /** Internal web socket server */
+    private webSocketServer: WebSocketServer = new WebSocketServer({ noServer: true });
+
+    // TODO(randomuserhi): A more sophisticated web socket API
+    private broadcast(route: "rapid/hotReload", body: any) {
+        for (const client of this.webSocketServer.clients) {
+            if (client.readyState !== client.OPEN) continue;
+            client.send(JSON.stringify({
+                route,
+                body
+            }));
+        }
+    }
+
     /**
      * 
      * @param directories 
@@ -460,6 +475,8 @@ export class RapidRuntime {
 
             registry.invalidate(paths);
 
+            const events: { route: string }[] = [];
+
             // Convert paths to URLs to invalidate frontend
             for (let path of paths) {
                 path = normalizePathPattern(path);
@@ -468,31 +485,20 @@ export class RapidRuntime {
                 const match = filePrefixMatch(path, directoryPatterns);
                 if (match === undefined) continue;
 
-                const pckgLocation = ASLPath.findPckgName(match.postfix)!;
-                const pckgName = match.postfix.slice(pckgLocation.start, pckgLocation.end);
-                match.postfix = match.postfix.slice(pckgLocation.end);
+                // Construct route 
+                const parts = match.postfix.split("/");
 
-                console.log(pckgName);
-                console.log(match);
+                // Ignore backend files
+                if (parts[2] === "back") continue;
 
-                // TODO(randomuserhi): get package name
-                // TODO(randomuserhi): ignore files from `back`
-                // TODO(randomuserhi): convert path postfixs
-                //                     `app/.build/front/minimal.asl.js` -> `app/minimal.asl.js`
-                //                     `app/.build/flex/minimal.asl.js` -> `app/minimal.asl.js`
-                // TODO(randomuserhi): since the package may have custom route logic that serves different files, its probably better to send a full path
-                //                     and have the front end deal with path conversion:
-                //                     {
-                //                         pckg: `app`,
-                //                         route: `/minimal.asl.js`,
-                //                         path: `/.build/flex/minimal.asl.js`,
-                //                         hidden: [ `/.build/front/minimal.asl.js`, `/front/minimal.asl.js` ]
-                //                     }
-                //                     this way the invalidation hook can see that the `flex` script changed, but it is hidden by both a built `front`
-                //                     version as well as a `front` version. Some logic can check if the hidden array is size 0, otherwise ignore the invalidation etc...
-                //
-                //                     so here you would invalidate the registry new URL(`/${pckg}${route}`, window.location.origin).toString()
+                // Remove .build/flex or .build/front part from path
+                parts.splice(1, 2); 
+                const route = "/" + parts.join("/");
+
+                events.push({ route });
             }
+
+            this.broadcast("rapid/hotReload", events);
         };
     }
 
@@ -609,8 +615,21 @@ export class RapidRuntime {
     }
     
     public listen(port: number): Promise<void> {
+        // TODO(randomuserhi): Guard against server & websocket already being enabled (aka stop 2 listen calls)
+
         return new Promise((resolve) => {
-            Http.createServer(this.onRequest.bind(this)).listen(port, resolve);
+            const server = Http.createServer(this.onRequest.bind(this)).listen(port, resolve);
+
+            server.on("upgrade", (req, socket, head) => {
+                if (req.url === "/rapid") {
+                    this.webSocketServer.handleUpgrade(req, socket, head, (ws) => {
+                        // emit connection event
+                        this.webSocketServer.emit("connection", ws, req);
+                    });
+                } else {
+                    socket.destroy();
+                }
+            });
         });
     }
 }

@@ -1,4 +1,4 @@
-import { ASLEnvironment, ASLPath, defaultImportHook, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
+import { ASLEnvironment, ASLPath, defaultImportHook, registry, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
 
 // Setup ASL base URL
 setASLBaseURL(window.location.origin);
@@ -34,6 +34,25 @@ function loadEntry(entry: string) {
     };
 
     env.fetch(new URL(ASLPath.fixASLExt(entry), baseURL).toString());
+
+    // Try connecting to socket
+    // TODO(randomuserhi): More sophisticated web socket API
+    const ws = new WebSocket(`ws://${window.location.host}/rapid`);
+    ws.onmessage = (ev => {
+        const data: {
+            route: string,
+            body: any
+        } = JSON.parse(ev.data);
+        switch (data.route) {
+        case "rapid/hotReload": {
+            const paths = [];
+            for (const path of data.body) {
+                paths.push(new URL(path.route, window.location.origin).toString());
+            }
+            registry.invalidate(paths);
+        } break;
+        }
+    });
 }
 
 interface RapidConfig {

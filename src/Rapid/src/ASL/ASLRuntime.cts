@@ -352,7 +352,7 @@ class ASLRegistry {
         // Normalize path
         path = Path.normalize(path);
 
-        if (ASL_IS_CASE_SENSITIVE) path = path.toLowerCase();
+        if (!ASL_IS_CASE_SENSITIVE) path = path.toLowerCase();
 
         let mid = this.mid.get(path);
         if (mid === undefined) {

@@ -351,7 +351,7 @@ class ASLRegistry {
         // Normalize path
         path = new URL(path, ASL_BASE_URL).toString();
 
-        if (ASL_IS_CASE_SENSITIVE) path = path.toLowerCase();
+        if (!ASL_IS_CASE_SENSITIVE) path = path.toLowerCase();
 
         let mid = this.mid.get(path);
         if (mid === undefined) {
