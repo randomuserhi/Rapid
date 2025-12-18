@@ -82,7 +82,7 @@ interface TsConfig {
     include?: string[];
 }
 
-const RAPID_CONFIG_DIRNAME = "rapid.config.json";
+const RAPID_CONFIG_NAME = "rapid.config.json";
 
 const RAPID_TSCONFIG_DIRNAME = ".tsconfig";
 const RAPID_BUILD_DIRNAME = ".build";
@@ -115,7 +115,7 @@ export class PackageRegistry {
 
         for (const dir of this.directories) {
             const baseDir = Path.resolve(Path.join(dir, pckg));
-            const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
+            const configPath = Path.join(baseDir, RAPID_CONFIG_NAME);
             const configStat = await fileStat(configPath);
             if (configStat === undefined) continue;
             return PackageInfo.get(configPath);
@@ -135,7 +135,7 @@ export class PackageRegistry {
     public findPckgSync(pckg: string): PackageInfo | undefined {
         for (const dir of this.directories) {
             const baseDir = Path.resolve(Path.join(dir, pckg));
-            const configPath = Path.join(baseDir, RAPID_CONFIG_DIRNAME);
+            const configPath = Path.join(baseDir, RAPID_CONFIG_NAME);
             const configStat = fileStatSync(configPath);
             if (configStat === undefined) continue;
             return PackageInfo.get(configPath);

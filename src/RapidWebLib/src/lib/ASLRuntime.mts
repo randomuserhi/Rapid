@@ -10,6 +10,12 @@ export function setASLBaseURL(url: string | URL) {
     ASL_BASE_URL = url;
 }
 
+/** Case sensitivity */
+let ASL_IS_CASE_SENSITIVE: boolean = true;
+export function setASLIsCaseSensitive(value: boolean) {
+    ASL_IS_CASE_SENSITIVE = value;
+}
+
 const CHAR_FORWARD_SLASH = 47; /* / */
 const CHAR_BACKWARD_SLASH = 92; /* \ */
 const CHAR_DOT = 46; /* . */
@@ -344,6 +350,8 @@ class ASLRegistry {
     public getMid(path: string) {
         // Normalize path
         path = new URL(path, ASL_BASE_URL).toString();
+
+        if (ASL_IS_CASE_SENSITIVE) path = path.toLowerCase();
 
         let mid = this.mid.get(path);
         if (mid === undefined) {

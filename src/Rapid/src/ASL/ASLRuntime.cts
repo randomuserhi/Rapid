@@ -7,6 +7,11 @@
 import File from "fs/promises";
 import Path from "path";
 
+let ASL_IS_CASE_SENSITIVE: boolean = true;
+export function setASLIsCaseSensitive(value: boolean) {
+    ASL_IS_CASE_SENSITIVE = value;
+}
+
 const CHAR_FORWARD_SLASH = 47; /* / */
 const CHAR_BACKWARD_SLASH = 92; /* \ */
 const CHAR_DOT = 46; /* . */
@@ -346,6 +351,8 @@ class ASLRegistry {
     public getMid(path: string) {
         // Normalize path
         path = Path.normalize(path);
+
+        if (ASL_IS_CASE_SENSITIVE) path = path.toLowerCase();
 
         let mid = this.mid.get(path);
         if (mid === undefined) {

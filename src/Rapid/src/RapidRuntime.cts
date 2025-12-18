@@ -1,11 +1,11 @@
 import FileSync from "fs";
 import File from "fs/promises";
-import Stream from "stream/promises";
 import Http from "http";
 import OS from "os";
 import Path from "path";
-import type { MapLike } from "typescript";
-import { ASLEnvironment, ASLModule, ASLModuleObject, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
+import Stream from "stream/promises";
+import { MapLike } from "typescript";
+import { ASLEnvironment, ASLModule, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 
 /** Probes the file system to determine if it is case sensitive or not */
@@ -25,6 +25,9 @@ function isFileSystemCaseSensitive() {
 /** Flag for if file system is case sensitive or not */
 const CASE_SENSITIVE_FS = isFileSystemCaseSensitive();
 
+/** Set ASL approapriately */
+setASLIsCaseSensitive(CASE_SENSITIVE_FS);
+
 /** Helper that determines if a file exists or not */
 const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
 
@@ -39,7 +42,7 @@ function normalizePathPattern(path: string) {
     if (path.length !== 0) {
         path = Path.normalize(path).replaceAll("\\", "/");
         if (path.codePointAt(path.length - 1) === CHAR_FORWARD_SLASH) path = path.slice(0, -1);
-        if (path.codePointAt(0) !== CHAR_FORWARD_SLASH) path = "/" + path;
+        if (!Path.isAbsolute(path) && path.codePointAt(0) !== CHAR_FORWARD_SLASH) path = "/" + path;
     } else {
         path = "/";
     }
@@ -50,10 +53,10 @@ function normalizePathPattern(path: string) {
  * Helper function that finds matching file prefixes
  * 
  * @param path The path to match
- * @param patterns Map of patterns to be matched
+ * @param patterns list of patterns to be matched
  * @returns Matched pattern and postfix path
  */
-function filePrefixMatch(path: string, patterns: MapLike<string[]>): { pattern: string, postfix: string } | undefined {
+function filePrefixMatch(path: string, patterns: MapLike<any>): { pattern: string, postfix: string } | undefined {
     path = normalizePathPattern(path);
 
     let longestMatch = -1;
@@ -447,8 +450,49 @@ export class RapidRuntime {
         this.packageWatchBuilder = new PackageWatchBuilder(this.packageRegistry, typeDir);
         this.packageBuilder = new PackageBuilder(typeDir);
 
+        // Manage invalidation on watcher builds
+        const directoryPatterns: MapLike<string> = {};
+        for (const directory of directories) {
+            directoryPatterns[normalizePathPattern(Path.join(directory, "*"))] = directory;
+        }
         this.packageWatchBuilder.onIncrementalBuild = (paths) => {
+            if (paths.length === 0) return;
+
             registry.invalidate(paths);
+
+            // Convert paths to URLs to invalidate frontend
+            for (let path of paths) {
+                path = normalizePathPattern(path);
+
+                // Find best matching directory
+                const match = filePrefixMatch(path, directoryPatterns);
+                if (match === undefined) continue;
+
+                const pckgLocation = ASLPath.findPckgName(match.postfix)!;
+                const pckgName = match.postfix.slice(pckgLocation.start, pckgLocation.end);
+                match.postfix = match.postfix.slice(pckgLocation.end);
+
+                console.log(pckgName);
+                console.log(match);
+
+                // TODO(randomuserhi): get package name
+                // TODO(randomuserhi): ignore files from `back`
+                // TODO(randomuserhi): convert path postfixs
+                //                     `app/.build/front/minimal.asl.js` -> `app/minimal.asl.js`
+                //                     `app/.build/flex/minimal.asl.js` -> `app/minimal.asl.js`
+                // TODO(randomuserhi): since the package may have custom route logic that serves different files, its probably better to send a full path
+                //                     and have the front end deal with path conversion:
+                //                     {
+                //                         pckg: `app`,
+                //                         route: `/minimal.asl.js`,
+                //                         path: `/.build/flex/minimal.asl.js`,
+                //                         hidden: [ `/.build/front/minimal.asl.js`, `/front/minimal.asl.js` ]
+                //                     }
+                //                     this way the invalidation hook can see that the `flex` script changed, but it is hidden by both a built `front`
+                //                     version as well as a `front` version. Some logic can check if the hidden array is size 0, otherwise ignore the invalidation etc...
+                //
+                //                     so here you would invalidate the registry new URL(`/${pckg}${route}`, window.location.origin).toString()
+            }
         };
     }
 

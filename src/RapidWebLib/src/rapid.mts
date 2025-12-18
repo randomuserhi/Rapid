@@ -1,7 +1,12 @@
-import { ASLEnvironment, defaultImportHook, ASLPath, setASLBaseURL } from "/rapid/ASLRuntime.mjs";
+import { ASLEnvironment, ASLPath, defaultImportHook, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
 
 // Setup ASL base URL
 setASLBaseURL(window.location.origin);
+
+// TODO(randomuserhi): Fetch request from backend whether it is case sensitive or not via a Get Request
+//                     This must be awaited on as we cannot continue until we know if paths are case
+//                     sensitive or not to prevent malforming the registry.
+setASLIsCaseSensitive(false);
 
 /** Load rapid entry point */
 function loadEntry(entry: string) {
