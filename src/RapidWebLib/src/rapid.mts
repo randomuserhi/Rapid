@@ -1,5 +1,9 @@
 import { ASLEnvironment, ASLPath, defaultImportHook, registry, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
 
+export const app = {
+    name: ASLPath.pckgName(window.location.pathname)
+};
+
 // Setup ASL base URL
 setASLBaseURL(window.location.origin);
 
@@ -10,10 +14,10 @@ setASLIsCaseSensitive(false);
 
 /** Load rapid entry point */
 function loadEntry(entry: string) {
-    const baseURL = `${window.location.origin}/${ASLPath.pckgName(window.location.pathname)}/`;
+    const baseURL = `${window.location.origin}/${app.name}/`;
 
     const env = new ASLEnvironment();
-    env.importHook = async (module, path) => {
+    env.importHook = async (module, data, path) => {
         path = ASLPath.fixASLExt(path);
 
         if (!path.startsWith(".")) {
@@ -30,7 +34,7 @@ function loadEntry(entry: string) {
             }
         }
 
-        return await defaultImportHook(module, path);
+        return await defaultImportHook(module, data, path);
     };
 
     env.fetch(new URL(ASLPath.fixASLExt(entry), baseURL).toString());
@@ -40,11 +44,15 @@ function loadEntry(entry: string) {
     const ws = new WebSocket(`ws://${window.location.host}/rapid`);
     ws.onmessage = (ev => {
         const data: {
+            pckg: string,
             route: string,
             body: any
         } = JSON.parse(ev.data);
+
+        if (data.pckg !== "rapid") return;
+
         switch (data.route) {
-        case "rapid/hotReload": {
+        case "hotReload": {
             const paths = [];
             for (const path of data.body) {
                 paths.push(new URL(path.route, window.location.origin).toString());
@@ -55,13 +63,13 @@ function loadEntry(entry: string) {
     });
 }
 
+// Load config and trigger entry point as required
+
 interface RapidConfig {
     entry?: string;
 }
 
 const rapid: RapidConfig = (window as any).rapid;
-(window as any).rapid = undefined;
-
 if (rapid !== undefined) {
     if (rapid.entry !== undefined && typeof rapid.entry === "string") {
         loadEntry(rapid.entry);

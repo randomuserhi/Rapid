@@ -360,6 +360,7 @@ async function generateInternalRepo(
             rapidLib: boolean,
             module: string,
             moduleResolution?: string,
+            types?: string[],
         }>
         
         createFolder: boolean,
@@ -390,7 +391,7 @@ async function generateInternalRepo(
             compilerOptions: {
                 composite: true,
                 lib,
-                types: types?.map(p => relPath(tsConfigDir, p)),
+                types: types,
                 rootDir: relPath(tsConfigDir, baseDir),
                 outDir: relPath(tsConfigDir, buildDir),
                 declarationDir: relPath(tsConfigDir, Path.join(pckg.baseDir, "@types", name)),
@@ -429,7 +430,8 @@ async function generateInternalRepo(
             browserStyleImports,
             rapidLib,
             module,
-            moduleResolution
+            moduleResolution,
+            types: variantTypes
         } = variants[variant];
 
         const supportedIncludes = includes.filter(include => include.variants === undefined || include.variants.includes(variant));
@@ -467,11 +469,16 @@ async function generateInternalRepo(
             }
         }
 
+        const combinedTypes = [];
+        if (variantTypes !== undefined) combinedTypes.push(...variantTypes);
+        if (types !== undefined) combinedTypes.push(...types);
+
         const config: TsConfig = {
             extends: relPath(tsConfigDir, baseTsConfigPath),
             compilerOptions: {
                 module: module as any,
                 moduleResolution: moduleResolution as any,
+                types: combinedTypes,
                 tsBuildInfoFile: relPath(tsConfigDir, Path.join(buildDir, `${variant}.tsbuildinfo`)),
                 paths
             },
@@ -491,7 +498,8 @@ async function generateInternalRepo(
             files: [],
             compilerOptions: {
                 composite: true,
-                tsBuildInfoFile: Path.join(relPath(baseDir, pckg.buildDir), `.${name}.tsbuildinfo`)
+                tsBuildInfoFile: Path.join(relPath(baseDir, pckg.buildDir), `.${name}.tsbuildinfo`),
+                noEmit: true
             },
             references: []
         };
@@ -542,7 +550,8 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
         files: [],
         compilerOptions: {
             composite: true,
-            tsBuildInfoFile: relPath(info.baseDir, Path.join(info.buildDir, ".tsbuildinfo"))
+            tsBuildInfoFile: relPath(info.baseDir, Path.join(info.buildDir, ".tsbuildinfo")),
+            noEmit: true
         },
         references: []
     };
@@ -596,7 +605,10 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             // TODO(randomuserhi): Flex shouldn't allow DOM libraries such as document etc..., 
             //                     but it needs stuff like AbortController and console.log
             //                     need to find out how to properly handle this
-            lib: ["ES2022", "DOM"],
+            lib: ["ES2022"],
+            types: [
+                Path.join(typeDir, "flex")
+            ],
             pckg: info,
             typeDir,
             createFolder: config.flex !== undefined,
@@ -606,7 +618,10 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 [ASL_EXTENSION_TS]: {
                     browserStyleImports: false,
                     rapidLib: false,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                    types: [
+                        Path.join(typeDir, "asl"),
+                    ]
                 }
             }
         }),
@@ -625,7 +640,10 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 [ASL_EXTENSION_TS]: {
                     browserStyleImports: false,
                     rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                    types: [
+                        Path.join(typeDir, "asl"),
+                    ]
                 },
                 ".cts": {
                     browserStyleImports: false,
@@ -652,7 +670,10 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 [ASL_EXTENSION_TS]: {
                     browserStyleImports: false,
                     rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                    types: [
+                        Path.join(typeDir, "asl"),
+                    ]
                 },
                 ".mts": {
                     browserStyleImports: true,

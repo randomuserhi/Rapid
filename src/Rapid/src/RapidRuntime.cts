@@ -3,11 +3,13 @@ import File from "fs/promises";
 import Http from "http";
 import OS from "os";
 import Path from "path";
-import Stream from "stream/promises";
-import { WebSocketServer } from "ws";
+import type Stream from "stream";
+import { pipeline } from "stream/promises";
 import { MapLike } from "typescript";
-import { ASLEnvironment, ASLModule, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
+import { WebSocketServer } from "ws";
+import { ASLEnvironment, ASLModule, ASLModuleData, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
+import { Router } from "./Router.cjs";
 
 /** Probes the file system to determine if it is case sensitive or not */
 function isFileSystemCaseSensitive() {
@@ -145,7 +147,7 @@ class RapidLib {
         this.app = app;
     }
 
-    public resolve(path: string): ASLModuleObject {
+    public resolve(data: ASLModuleData, path: string): ASLModuleObject {
         // strip ".js" and ".cjs" extension from path
         if (!ASLPath.endsWithSeparator(path)) {
             const extLoc = ASLPath.findExtname(path);
@@ -162,10 +164,10 @@ class RapidLib {
         if (obj === undefined) {
             if (path === "rapid") {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
-                obj = require("./RapidLib/rapid.cjs").link(this.app);
+                obj = require("./RapidLib/rapid.cjs").link(this.app, data);
             } else {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
-                obj = require(`.${Path.sep}${Path.join("RapidLib/lib", `${Path.relative("rapid", path)}.cjs`)}`).link(this.app);
+                obj = require(`.${Path.sep}${Path.join("RapidLib/lib", `${Path.relative("rapid", path)}.cjs`)}`).link(this.app, data);
             }
         }
 
@@ -182,7 +184,7 @@ async function serveResource(path: string, res: Http.ServerResponse) {
     res.writeHead(200, { 'Content-Type': contentType });
 
     const stream = FileSync.createReadStream(path);
-    await Stream.pipeline(stream, res);
+    await pipeline(stream, res);
 }
 
 /** A single app instance that represents a package */
@@ -197,7 +199,7 @@ export class RapidApp {
     private readonly environment: ASLEnvironment;
 
     /** Routes that are used to resolve certain URL paths */
-    public readonly routes = new Map<RestMethod, Map<string, Route>>();
+    public readonly routes = new Map<RestMethod, Router<[req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown]>>();
 
     /** RapidLib object */
     private rapidLib: RapidLib;
@@ -225,7 +227,7 @@ export class RapidApp {
     }
 
     /** Import hook to resolve ASL environment paths */
-    private async aslImportHook(module: ASLModule, path: string): Promise<string | ASLModuleObject> {
+    private async aslImportHook(module: ASLModule, data: ASLModuleData, path: string): Promise<string | ASLModuleObject> {
         path = ASLPath.fixASLExt(Path.normalize(path));
 
         const {
@@ -285,7 +287,7 @@ export class RapidApp {
 
             // Special case for rapidlib:
             if (ASLPath.pckgName(path) === "rapid") {
-                return this.rapidLib.resolve(path);
+                return this.rapidLib.resolve(data, path);
             }
 
             // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -298,7 +300,7 @@ export class RapidApp {
 
             // Special case for rapidlib:
             if (pckgName === "rapid") {
-                return this.rapidLib.resolve(path);
+                return this.rapidLib.resolve(data, path);
             }
 
             const pckgInfo = await this.runtime.packageRegistry.findPckg(pckgName);
@@ -365,19 +367,22 @@ export class RapidApp {
         }
     }
 
+    /** Handle connection upgrade requests */
+    public async onUpgrade(req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>) {
+        // TODO(randomuserhi): implement
+        socket.destroy();
+    }
+
     /** Handle requests for the given App */
     public async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
         let resourcePath: string | undefined = undefined;
 
         try {
             // Trigger any handlers
-            const group = this.routes.get(req.method! as RestMethod);
-            if (group !== undefined) {
-                const route = group.get(req.url!);
-                if (route !== undefined) {
-                    route.handler(req, res);
-                    return;
-                }
+            const router = this.routes.get(req.method! as RestMethod);
+            if (router !== undefined) {
+                const result = await router.match(req.url!, req, res, Router.NEXT);
+                if (result !== Router.NO_MATCH && result !== Router.NEXT) return;
             }
     
             // Locate package resource
@@ -441,14 +446,15 @@ export class RapidRuntime {
     /** Builder for building packages without watcher */
     public readonly packageBuilder: PackageBuilder;
 
-    /** Internal web socket server */
+    /** Internal web socket server for rapid's standard library */
     private webSocketServer: WebSocketServer = new WebSocketServer({ noServer: true });
 
     // TODO(randomuserhi): A more sophisticated web socket API
-    private broadcast(route: "rapid/hotReload", body: any) {
+    private broadcast(route: "hotReload", body: any) {
         for (const client of this.webSocketServer.clients) {
             if (client.readyState !== client.OPEN) continue;
             client.send(JSON.stringify({
+                pckg: "rapid",
                 route,
                 body
             }));
@@ -498,8 +504,50 @@ export class RapidRuntime {
                 events.push({ route });
             }
 
-            this.broadcast("rapid/hotReload", events);
+            if (events.length > 0) this.broadcast("hotReload", events);
         };
+    }
+
+    /** Handle connection upgrade requests */
+    private async onUpgrade(req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>) {
+        try {
+            const pckgNameLocation = ASLPath.findPckgName(req.url!);
+            if (pckgNameLocation === undefined) {
+                // TODO(randomuserhi): Write HTTP header for rejection (e.g code 404 etc...)
+                socket.destroy();
+                return;
+            }
+
+            let pckgName = decodeURI(req.url!.slice(pckgNameLocation.start, pckgNameLocation.end));
+            const pckgUrl = req.url!.slice(pckgNameLocation.end);
+
+            // if file system is not case sensitive, resolve package names as always lower-case
+            if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
+
+            // Special case for standard library
+            if (pckgName === "rapid") {
+                this.webSocketServer.handleUpgrade(req, socket, head, (ws) => {
+                    // emit connection event
+                    this.webSocketServer.emit("connection", ws, req);
+                });
+                return;
+            }
+    
+            const instance = this.instances.get(pckgName);
+            if (instance === undefined) {
+                // TODO(randomuserhi): Write HTTP header for rejection (e.g code 404 etc...)
+                socket.destroy();
+                return;
+            }
+    
+            // Pass request onto the given package
+            req.url = pckgUrl;
+            instance.onUpgrade(req, socket, head);
+        } catch(err) {
+            // TODO(randomuserhi): Write HTTP header for rejection (e.g code 500 etc...)
+            socket.destroy();
+            console.error(err);
+        }
     }
 
     private async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
@@ -516,6 +564,9 @@ export class RapidRuntime {
         
             let pckgName = decodeURI(req.url!.slice(pckgNameLocation.start, pckgNameLocation.end));
             const pckgUrl = req.url!.slice(pckgNameLocation.end);
+
+            // if file system is not case sensitive, resolve package names as always lower-case
+            if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
 
             // Manage rapid standard library
             let rapidLibResource: string | undefined = undefined;
@@ -557,9 +608,6 @@ export class RapidRuntime {
                 return;
             }
     
-            // if file system is not case sensitive, resolve package names as always lower-case
-            if (!CASE_SENSITIVE_FS) pckgName = pckgName.toLowerCase();
-    
             let instance = this.instances.get(pckgName);
             if (instance === undefined) {
                 const pckgInfo = await this.packageRegistry.findPckg(pckgName);
@@ -570,6 +618,8 @@ export class RapidRuntime {
                 }
     
                 // Auto watch launched apps
+                // TODO(randomuserhi): Should be moved to a debug mode
+                //                     typescript is only active when developing, not when using
                 this.watch(pckgInfo.name);
     
                 // Launch app instance
@@ -619,17 +669,7 @@ export class RapidRuntime {
 
         return new Promise((resolve) => {
             const server = Http.createServer(this.onRequest.bind(this)).listen(port, resolve);
-
-            server.on("upgrade", (req, socket, head) => {
-                if (req.url === "/rapid") {
-                    this.webSocketServer.handleUpgrade(req, socket, head, (ws) => {
-                        // emit connection event
-                        this.webSocketServer.emit("connection", ws, req);
-                    });
-                } else {
-                    socket.destroy();
-                }
-            });
+            server.on("upgrade", this.onUpgrade.bind(this));
         });
     }
 }
