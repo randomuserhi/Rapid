@@ -1,4 +1,6 @@
-import { ASLEnvironment, ASLPath, defaultImportHook, registry, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
+import { ASLEnvironment, ASLPath, defaultImportHook, getASLBaseURL, registry, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
+
+const APP_LINK_HOOK = "__linkRapidApp";
 
 export const app = {
     name: ASLPath.pckgName(window.location.pathname)
@@ -17,7 +19,7 @@ function loadEntry(entry: string) {
     const baseURL = `${window.location.origin}/${app.name}/`;
 
     const env = new ASLEnvironment();
-    env.importHook = async (module, data, path) => {
+    env.importHook = async (module, path) => {
         path = ASLPath.fixASLExt(path);
 
         if (!path.startsWith(".")) {
@@ -31,10 +33,20 @@ function loadEntry(entry: string) {
                 // Amend extension if none is given, all rapidlib paths are .mjs scripts
                 // so we can accept no extension and implicitly add extension
                 if (!ASLPath.endsWithSeparator(path) && ASLPath.extname(path) === "") path += ".mjs";
+
+                // Import directly
+                let obj = await import(new URL(path, getASLBaseURL()).toString()); 
+
+                // Trigger App link hook
+                if (Object.prototype.hasOwnProperty.call(obj, APP_LINK_HOOK)) {
+                    obj = obj[APP_LINK_HOOK](app);
+                }
+
+                return obj;
             }
         }
 
-        return await defaultImportHook(module, data, path);
+        return await defaultImportHook(module, path);
     };
 
     env.fetch(new URL(ASLPath.fixASLExt(entry), baseURL).toString());

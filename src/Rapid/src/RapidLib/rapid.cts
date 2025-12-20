@@ -3,18 +3,18 @@ import type { RapidApp } from "../RapidRuntime.cjs";
 export type { RapidApp } from "../RapidRuntime.cjs";
 
 import Http from "http";
-import { ASLModuleData } from "../ASL/ASLRuntime.cjs";
+import type { ASLModuleInfo, ASLModuleRuntime } from "../ASL/ASLRuntime.cjs";
 import { PatternMatch, Router } from "../Router.cjs";
 
-function get(this: RapidApp, data: ASLModuleData, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
-    let router = this.routes.get("GET");
+function get(this: RapidApp, runtime: ASLModuleRuntime, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
+    let router = this.httpRoutes.get("GET");
     if (router === undefined) {
         router = new Router();
-        this.routes.set("GET", router);
+        this.httpRoutes.set("GET", router);
     }
     
     router.add(path, cb);
-    data.abort.signal.addEventListener("abort", () => {
+    runtime.abort.signal.addEventListener("abort", () => {
         router.remove(cb);
     });
 
@@ -22,20 +22,34 @@ function get(this: RapidApp, data: ASLModuleData, path: string, cb: (match: Patt
 }
 
 function remove(this: RapidApp, method: "GET", cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
-    let router = this.routes.get("GET");
+    let router = this.httpRoutes.get(method);
     if (router === undefined) {
         router = new Router();
-        this.routes.set("GET", router);
+        this.httpRoutes.set(method, router);
     }
 
     return router.remove(cb);
 }
 
-export function link(app: RapidApp, data: ASLModuleData) {
+const __linkCache = {
+    remove
+};
+
+// ASL import hook for module runtime 
+function __linkASLRuntime(this: RapidApp, module: ASLModuleInfo, runtime: ASLModuleRuntime) {
     return {
         app: {
-            get: get.bind(app, data),
-            remove: remove.bind(app)
+            get: get.bind(this, runtime),
+            ...__linkCache
         }
+    };
+}
+
+// Rapid App hook
+export function __linkRapidApp(app: RapidApp) {
+    __linkCache.remove = remove.bind(app);
+
+    return {
+        __linkASLRuntime: __linkASLRuntime.bind(app)
     };
 }

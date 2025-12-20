@@ -321,7 +321,7 @@ function addTsPath(paths: Ts.MapLike<string[]>, key: string, value: string | str
     if (browserStyle && !key.startsWith("/")) {
         key = "/" + key;
     }
-    if (!(key in paths)) {
+    if (!Object.prototype.hasOwnProperty.call(paths, key)) {
         paths[key] = [];
     }
     if (typeof value === "string") {
@@ -438,11 +438,6 @@ async function generateInternalRepo(
 
         // build paths
         const paths: Ts.MapLike<string[]> = {};
-
-        // browsers require URL's so root imports don't work
-        if (!browserStyleImports) {
-            addTsPath(paths, "*", relPath(tsConfigDir, Path.join(pckg.baseDir, name, "*")), browserStyleImports);
-        }
 
         // standard library paths
         if (rapidLib) {

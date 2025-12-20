@@ -7,7 +7,7 @@ import type Stream from "stream";
 import { pipeline } from "stream/promises";
 import { MapLike } from "typescript";
 import { WebSocketServer } from "ws";
-import { ASLEnvironment, ASLModule, ASLModuleData, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
+import { ASLEnvironment, ASLModuleInfo, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 import { Router } from "./Router.cjs";
 
@@ -138,6 +138,9 @@ const mimeTypes = {
 
 /** */
 class RapidLib {
+    // Link hook function name
+    private static readonly APP_LINK_HOOK = "__linkRapidApp";
+
     /** Package */
     private readonly app: RapidApp;
 
@@ -147,7 +150,7 @@ class RapidLib {
         this.app = app;
     }
 
-    public resolve(data: ASLModuleData, path: string): ASLModuleObject {
+    public resolve(path: string): ASLModuleObject {
         // strip ".js" and ".cjs" extension from path
         if (!ASLPath.endsWithSeparator(path)) {
             const extLoc = ASLPath.findExtname(path);
@@ -164,10 +167,15 @@ class RapidLib {
         if (obj === undefined) {
             if (path === "rapid") {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
-                obj = require("./RapidLib/rapid.cjs").link(this.app, data);
+                obj = require("./RapidLib/rapid.cjs");
             } else {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
-                obj = require(`.${Path.sep}${Path.join("RapidLib/lib", `${Path.relative("rapid", path)}.cjs`)}`).link(this.app, data);
+                obj = require(`.${Path.sep}${Path.join("RapidLib/lib", `${Path.relative("rapid", path)}.cjs`)}`);
+            }
+
+            // Trigger app link hook if provided to link the module with the current app instance
+            if (Object.prototype.hasOwnProperty.call(obj, RapidLib.APP_LINK_HOOK)) {
+                obj = obj![RapidLib.APP_LINK_HOOK](this.app);
             }
         }
 
@@ -199,7 +207,10 @@ export class RapidApp {
     private readonly environment: ASLEnvironment;
 
     /** Routes that are used to resolve certain URL paths */
-    public readonly routes = new Map<RestMethod, Router<[req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown]>>();
+    public readonly httpRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown]>>();
+
+    /** Routes that are used for upgrading websocket connections */
+    public readonly wsRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown]>>();
 
     /** RapidLib object */
     private rapidLib: RapidLib;
@@ -227,16 +238,12 @@ export class RapidApp {
     }
 
     /** Import hook to resolve ASL environment paths */
-    private async aslImportHook(module: ASLModule, data: ASLModuleData, path: string): Promise<string | ASLModuleObject> {
-        path = ASLPath.fixASLExt(Path.normalize(path));
+    private async aslImportHook(module: ASLModuleInfo, path: string): Promise<string | ASLModuleObject> {
+        path = ASLPath.fixASLExt(path);
 
         const {
             baseDir,
-            buildDir,
-            backDir,
-            backBuildDir,
-            flexBuildDir,
-            flexDir
+            buildDir
         } = this.pckgInfo;
 
         if (path.startsWith(".")) {
@@ -264,20 +271,6 @@ export class RapidApp {
                 resolvedPath = Path.join(buildDir, relPath);
                 if (await fileExists(resolvedPath)) return resolvedPath;
             }
-
-            // If we still can't find it, check flex directories
-            const inFlexDirectory = inBuildDir ? fullPath.startsWith(flexBuildDir) : fullPath.startsWith(flexDir);
-            if (inFlexDirectory) {
-                const relPath = inBuildDir ? Path.relative(backBuildDir, fullPath) : Path.relative(backDir, fullPath);
-
-                // Check flex build path
-                resolvedPath = Path.join(flexBuildDir, relPath);
-                if (await fileExists(resolvedPath)) return resolvedPath;
-
-                // Check flex path
-                resolvedPath = Path.join(flexDir, relPath);
-                if (await fileExists(resolvedPath)) return resolvedPath;
-            }
         } else if (Path.extname(path) === "") {
             // For non-relative imports with no extension, just do a basic require
             // This is for standard library node modules like "path" or "file" etc...
@@ -287,7 +280,7 @@ export class RapidApp {
 
             // Special case for rapidlib:
             if (ASLPath.pckgName(path) === "rapid") {
-                return this.rapidLib.resolve(data, path);
+                return this.rapidLib.resolve(path);
             }
 
             // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -300,7 +293,7 @@ export class RapidApp {
 
             // Special case for rapidlib:
             if (pckgName === "rapid") {
-                return this.rapidLib.resolve(data, path);
+                return this.rapidLib.resolve(path);
             }
 
             const pckgInfo = await this.runtime.packageRegistry.findPckg(pckgName);
@@ -369,8 +362,21 @@ export class RapidApp {
 
     /** Handle connection upgrade requests */
     public async onUpgrade(req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>) {
-        // TODO(randomuserhi): implement
-        socket.destroy();
+        try {
+            // Trigger any handlers
+            const router = this.wsRoutes.get(req.method! as RestMethod);
+            if (router !== undefined) {
+                const result = await router.match(req.url!, req, socket, head, Router.NEXT);
+                if (result !== Router.NO_MATCH && result !== Router.NEXT) return;
+            }
+
+            // TODO(randomuserhi): Write HTTP header for rejection (e.g code 404 etc...)
+            socket.destroy();
+        } catch (err) {
+            // TODO(randomuserhi): Write HTTP header for rejection (e.g code 500 etc...)
+            socket.destroy();
+            console.error(err);
+        }
     }
 
     /** Handle requests for the given App */
@@ -379,7 +385,7 @@ export class RapidApp {
 
         try {
             // Trigger any handlers
-            const router = this.routes.get(req.method! as RestMethod);
+            const router = this.httpRoutes.get(req.method! as RestMethod);
             if (router !== undefined) {
                 const result = await router.match(req.url!, req, res, Router.NEXT);
                 if (result !== Router.NO_MATCH && result !== Router.NEXT) return;

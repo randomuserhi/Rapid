@@ -30,7 +30,7 @@ function base(this: RapidApp, ...parts: string[]) {
     return Path.join(baseDir, ...parts);
 }
 
-export function link(app: RapidApp) {
+export function __linkRapidApp(app: RapidApp) {
     return {
         front: front.bind(app),
         base: base.bind(app)
