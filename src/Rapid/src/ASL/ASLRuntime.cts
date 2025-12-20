@@ -199,10 +199,10 @@ type ASLImportFunc = (path: string, options?: ASLImportOptions) => Promise<ASLMo
  * ASL module function.
  * 
  * @param aslImport ASL import function. Used to import other modules.
- * @param module Object containing module information.
+ * @param __ASL Object containing asl API.
  * @param exports Object containing the modules exports.
  */
-type ASLModuleFunc = (aslImport: ASLImportFunc, module: any, exports: ASLModuleObject) => Promise<void>;
+type ASLModuleFunc = (aslImport: ASLImportFunc, __ASL: any, exports: ASLModuleObject) => Promise<void>;
 
 /**
  * Import options when using `require` in an ASL script
@@ -215,8 +215,56 @@ interface ASLImportOptions {
 /**
  * Module runtime
  */
-export interface ASLModuleRuntime {
-    abort: AbortController;
+export class ASLModuleRuntime {
+    /** Path to the given module */
+    public readonly path: string;
+
+    /** 
+     * Determines whether the exports are writeable.
+     * When a module has finished execution, the exports are marked as readonly.
+     */
+    private mutable: boolean = true;
+
+    /**
+     * Module exports object
+     */
+    public readonly exports: ASLModuleObject;
+
+    constructor(info: ASLModuleInfo) {
+        this.path = info.path;
+        this.exports = new Proxy<ASLModuleObject>({}, {
+            set: this.exportProxySetHandler.bind(this)
+        });
+    }
+
+    /** Proxy handler for exports to check mutability */
+    private exportProxySetHandler(this: ASLModuleRuntime, exports: ASLModuleObject, prop: string | symbol, newValue: any) {
+        if (!this.mutable) throw new Error(`You cannot alter exports once a module has loaded.`);
+        exports[prop] = newValue;
+        return true;
+    };
+
+    /** Abort controller to handle module destruction */
+    private readonly abort = new AbortController();
+    
+    /** Abort signal to handle module destruction */
+    public readonly signal = this.abort.signal;
+    
+    /** Trigger callbacks when module is destructed */
+    public onAbort(cb: () => void) {
+        this.abort.signal.addEventListener("abort", cb);
+    }
+
+    /** 
+     * Special callback used internally that resolves the execution promise created by `execModule`.
+     */
+    private resolve: (result: ASLModuleObject) => void = undefined!;
+
+    /** Mark module as ready */
+    public ready() {
+        this.mutable = false;
+        this.resolve(this.exports);
+    }
 }
 
 export interface ASLModuleInfo {
@@ -520,26 +568,14 @@ class ASLRegistry {
      */
     private execModule(moduleInfo: ASLModuleInfo, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc, runtime: ASLModuleRuntime): ASLRequest<ASLModuleObject> {
         return ASLRequest((resolve, reject) => {
-            let mutable = true;
+            // Assign resolve object for marking execution completion
+            runtime["resolve"] = resolve;
 
-            const exports = new Proxy<Record<PropertyKey, any>>({}, {
-                set(exports, prop, newValue) {
-                    if (!mutable) throw new Error(`You cannot alter exports once a module has loaded.`);
-                    exports[prop] = newValue;
-                    return true;
-                }
-            });
+            // Create a proxy to make the runtime readonly as an API
+            const __ASL = new Proxy(runtime, ASLRegistry.moduleProxyHandler);
 
-            const module = new Proxy({
-                ready: () => {
-                    mutable = false;
-                    resolve(exports);
-                },
-                abort: runtime.abort.signal // TODO(randomuserhi): Better API
-            }, ASLRegistry.moduleProxyHandler);
-
-            moduleFunc(envImport.bind(undefined, moduleInfo, runtime), module, exports)
-                .then(() => module.ready())
+            moduleFunc(envImport.bind(undefined, moduleInfo, runtime), __ASL, runtime.exports)
+                .then(() => runtime.ready())
                 .catch((err) => reject(err));
         });
     }
@@ -682,13 +718,13 @@ const RUNTIME_HOOK_PROXY_HANDLER: ProxyHandler<any> = {
 };
 
 /** By default call hook function and wrap newly returned exports in a readonly proxy. */
-export const defaultRuntimeHook = async (module: ASLModuleInfo, runtime: ASLModuleRuntime, object: ASLModuleObject) => {
+export const defaultRuntimeHook = async (runtime: ASLModuleRuntime, object: ASLModuleObject) => {
     if (Object.prototype.hasOwnProperty.call(object, RUNTIME_HOOK_NAME)) {
-        return new Proxy(object[RUNTIME_HOOK_NAME](module, runtime), RUNTIME_HOOK_PROXY_HANDLER);
+        return new Proxy(object[RUNTIME_HOOK_NAME](runtime), RUNTIME_HOOK_PROXY_HANDLER);
     }
     return object;
 };
-export type __linkASLRuntime = (module: ASLModuleInfo, runtime: ASLModuleRuntime) => ASLModuleObject;
+export type __linkASLRuntime = (runtime: ASLModuleRuntime) => ASLModuleObject;
 
 /** By default, resolve relative paths based on importing module */
 export const defaultImportHook = async (module: ASLModuleInfo, path: string) => {
@@ -714,7 +750,7 @@ export type ASLImportHook = (module: ASLModuleInfo, path: string, options?: ASLI
 export type ASLErrorHook = (mid: ASLModuleId, error?: any) => void;
 
 /** Function called when an import is being attached to a modules runtime */
-export type ASLRuntimeHook = (module: ASLModuleInfo, runtime: ASLModuleRuntime, object: ASLModuleObject) => Promise<ASLModuleObject>;
+export type ASLRuntimeHook = (runtime: ASLModuleRuntime, object: ASLModuleObject) => Promise<ASLModuleObject>;
 
 /**
  * ASL Environment.
@@ -912,7 +948,7 @@ export class ASLEnvironment {
             throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
         }).then((exports) => {
             // Pass through runtime hook
-            return this.runtimeHook(moduleInfo, runtime, exports);   
+            return this.runtimeHook(runtime, exports);   
         }).then((exports) => {
             if (exports === undefined) throw new Error("ASL `exports` object was undefined.");
 
@@ -1003,9 +1039,7 @@ export class ASLEnvironment {
                         context.moduleArchetype.set(mid, context.traverse(context.rootArchetype, mid));
 
                         // Create module data
-                        const runtime: ASLModuleRuntime = {
-                            abort: new AbortController()
-                        };
+                        const runtime = new ASLModuleRuntime(result.item.info);
                         // TODO(randomuserhi): Better Error
                         if (context.moduleRuntimes.has(mid)) throw new Error("ModuleData for this module already exists. This should never happen!");
                         context.moduleRuntimes.set(mid, runtime);
@@ -1075,10 +1109,10 @@ export class ASLEnvironment {
         // Add to set of unloaded modules
         unloadedModules.add(mid);
 
-        // Call module destructors and delete module data
-        const moduleData = this.moduleRuntimes.get(mid);
-        if (moduleData !== undefined) {
-            moduleData.abort.abort();
+        // Call module destructors and delete module runtime
+        const runtime = this.moduleRuntimes.get(mid);
+        if (runtime !== undefined) {
+            runtime["abort"].abort();
             this.moduleRuntimes.delete(mid);
         }
 

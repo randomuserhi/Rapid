@@ -3,7 +3,7 @@ import type { RapidApp } from "../RapidRuntime.cjs";
 export type { RapidApp } from "../RapidRuntime.cjs";
 
 import Http from "http";
-import type { ASLModuleInfo, ASLModuleRuntime } from "../ASL/ASLRuntime.cjs";
+import type { ASLModuleRuntime } from "../ASL/ASLRuntime.cjs";
 import { PatternMatch, Router } from "../Router.cjs";
 
 function get(this: RapidApp, runtime: ASLModuleRuntime, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
@@ -14,9 +14,7 @@ function get(this: RapidApp, runtime: ASLModuleRuntime, path: string, cb: (match
     }
     
     router.add(path, cb);
-    runtime.abort.signal.addEventListener("abort", () => {
-        router.remove(cb);
-    });
+    runtime.onAbort(() => router.remove(cb));
 
     return cb;
 }
@@ -36,7 +34,7 @@ const __linkCache = {
 };
 
 // ASL import hook for module runtime 
-function __linkASLRuntime(this: RapidApp, module: ASLModuleInfo, runtime: ASLModuleRuntime) {
+function __linkASLRuntime(this: RapidApp, runtime: ASLModuleRuntime) {
     return {
         app: {
             get: get.bind(this, runtime),
