@@ -37,7 +37,8 @@ function loadEntry(entry: string) {
                 // Import directly
                 let obj = await import(new URL(path, getASLBaseURL()).toString()); 
 
-                // Trigger App link hook
+                // Trigger App link hook so rapid standard library functions
+                // know what app they are associated with
                 if (Object.prototype.hasOwnProperty.call(obj, APP_LINK_HOOK)) {
                     obj = obj[APP_LINK_HOOK](app);
                 }
@@ -51,7 +52,7 @@ function loadEntry(entry: string) {
 
     env.fetch(new URL(ASLPath.fixASLExt(entry), baseURL).toString());
 
-    // Try connecting to socket
+    // Try connecting to socket - need a reconnect ability if socket closes
     // TODO(randomuserhi): More sophisticated web socket API
     const ws = new WebSocket(`ws://${window.location.host}/rapid`);
     ws.onmessage = (ev => {

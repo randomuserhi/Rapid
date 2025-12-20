@@ -30,6 +30,7 @@ function base(this: RapidApp, ...parts: string[]) {
     return Path.join(baseDir, ...parts);
 }
 
+// Rapid App hook
 export function __linkRapidApp(app: RapidApp) {
     return {
         front: front.bind(app),

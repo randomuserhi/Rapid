@@ -750,8 +750,13 @@ export type ASLImportHook = (module: ASLModuleInfo, path: string, options?: ASLI
 /** Function called on error */
 export type ASLErrorHook = (mid: ASLModuleId, error?: any) => void;
 
-/** Function called when an import has finished running */
-export type ASLRuntimeHook = (runtime: ASLModuleRuntime, object: ASLModuleObject) => Promise<ASLModuleObject>;
+/** 
+ * Function called when an import has finished running 
+ *
+ * @param runtime The runtime of the module performing the import on the current module
+ * @param exports The exports of the current module
+ */
+export type ASLRuntimeHook = (runtime: ASLModuleRuntime, exports: ASLModuleObject) => Promise<ASLModuleObject>;
 
 /**
  * ASL Environment.

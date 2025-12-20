@@ -14,6 +14,8 @@ function get(this: RapidApp, runtime: ASLModuleRuntime, path: string, cb: (match
     }
     
     router.add(path, cb);
+
+    // Auto clear route when module is destructed
     runtime.onAbort(() => router.remove(cb));
 
     return cb;
@@ -29,6 +31,7 @@ function remove(this: RapidApp, method: "GET", cb: (match: PatternMatch, req: Ht
     return router.remove(cb);
 }
 
+// Cache bound functions after linking to app (used by ASLRuntime linker)
 const __linkCache = {
     remove
 };

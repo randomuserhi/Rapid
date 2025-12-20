@@ -173,7 +173,7 @@ class RapidLib {
                 obj = require(`.${Path.sep}${Path.join("RapidLib/lib", `${Path.relative("rapid", path)}.cjs`)}`);
             }
 
-            // Trigger app link hook if provided to link the module with the current app instance
+            // Trigger app link hook so rapid standard library functions know what app they are associated with
             if (Object.prototype.hasOwnProperty.call(obj, RapidLib.APP_LINK_HOOK)) {
                 obj = obj![RapidLib.APP_LINK_HOOK](this.app);
             }
@@ -455,6 +455,12 @@ export class RapidRuntime {
     /** Internal web socket server for rapid's standard library */
     private webSocketServer: WebSocketServer = new WebSocketServer({ noServer: true });
 
+    /**
+     * Broadcast a message on the rapid websocket to all clients
+     * 
+     * @param route 
+     * @param body 
+     */
     // TODO(randomuserhi): A more sophisticated web socket API
     private broadcast(route: "hotReload", body: any) {
         for (const client of this.webSocketServer.clients) {
