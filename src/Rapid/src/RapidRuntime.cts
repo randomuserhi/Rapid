@@ -292,6 +292,26 @@ export class RapidApp {
                 }
             }
 
+            // If front doesnt have it, check flex
+            if (config.flex?.paths !== undefined) {
+                const paths = config.flex.paths;
+                const match = filePrefixMatch(req.url!, paths);
+                if (match !== undefined) {
+                    for (const path of paths[match.pattern]) {
+                        if (Path.basename(path) === "*") {
+                            resourcePath = Path.join(this.pckgInfo.baseDir, Path.dirname(path), match.postfix);
+                        } else {
+                            resourcePath = Path.join(this.pckgInfo.baseDir, path);
+                        }
+
+                        if (await fileExists(resourcePath)) {
+                            await serveResource(resourcePath, res);
+                            return;
+                        }
+                    }
+                }
+            }
+
             // Otherwise return 404 not found
             res.statusCode = 404;
             res.end("Not Found");
@@ -506,6 +526,23 @@ export class RapidRuntime {
                 // Otherwise check package paths
                 if (config.back?.paths !== undefined) {
                     const paths = config.back.paths;
+                    const match = filePrefixMatch(path, paths);
+                    if (match !== undefined) {
+                        for (const path of paths[match.pattern]) {
+                            let resolvedPath: string;
+                            if (Path.basename(path) === "*") {
+                                resolvedPath = Path.join(baseDir, Path.dirname(path), match.postfix);
+                            } else {
+                                resolvedPath = Path.join(baseDir, path);
+                            }
+                            if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
+                        }
+                    }
+                }
+
+                // Finally check flex package paths
+                if (config.flex?.paths !== undefined) {
+                    const paths = config.flex.paths;
                     const match = filePrefixMatch(path, paths);
                     if (match !== undefined) {
                         for (const path of paths[match.pattern]) {

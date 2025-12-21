@@ -344,6 +344,9 @@ async function generateInternalRepo(
         /** Name of internal repo */
         name: "back" | "flex" | "front",
 
+        /** names to inherit path overrides from */
+        pathOverrideNames: ("back" | "flex" | "front")[],
+
         /** Package dependencies */
         additionalDependencies: PackageInfo[],
 
@@ -367,6 +370,7 @@ async function generateInternalRepo(
     }) {
     const {
         name,
+        pathOverrideNames,
         pckg,
         typeDir,
         createFolder,
@@ -453,13 +457,15 @@ async function generateInternalRepo(
                 addTsPath(paths, `${dependency.name}/*`, relPath(tsConfigDir, Path.join(dependency.baseDir, include.name, "*")), browserStyleImports);
             }
 
-            const pathOverrides: PackagePathOverrides | undefined = (dependentConfig as any)[name];
-            if (pathOverrides !== undefined && pathOverrides.types !== undefined) {
-                const types = pathOverrides.types;
-                for (let key in types) {
-                    const values = types[key].map(p => relPath(tsConfigDir, Path.resolve(dependency.baseDir, p)));
-                    key = (key === "/" || key === "") ? dependency.name : `${dependency.name}${key.startsWith("/") ? "" : "/"}${key}`;
-                    addTsPath(paths, key, values, browserStyleImports);
+            for (const name of pathOverrideNames) {
+                const pathOverrides: PackagePathOverrides | undefined = (dependentConfig as any)[name];
+                if (pathOverrides !== undefined && pathOverrides.types !== undefined) {
+                    const types = pathOverrides.types;
+                    for (let key in types) {
+                        const values = types[key].map(p => relPath(tsConfigDir, Path.resolve(dependency.baseDir, p)));
+                        key = (key === "/" || key === "") ? dependency.name : `${dependency.name}${key.startsWith("/") ? "" : "/"}${key}`;
+                        addTsPath(paths, key, values, browserStyleImports);
+                    }
                 }
             }
         }
@@ -597,6 +603,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
     await Promise.all([
         generateInternalRepo(tsconfigBasePath, {
             name: "flex",
+            pathOverrideNames: ["flex"],
             // TODO(randomuserhi): Flex shouldn't allow DOM libraries such as document etc..., 
             //                     but it needs stuff like AbortController and console.log
             //                     need to find out how to properly handle this
@@ -622,6 +629,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
         }),
         generateInternalRepo(tsconfigBasePath, {
             name: "back",
+            pathOverrideNames: ["back", "flex"],
             lib: ["ES2022", "DOM"],
             types: [
                 Path.join(typeDir, "node")
@@ -656,6 +664,7 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
         }),
         generateInternalRepo(tsconfigBasePath, {
             name: "front",
+            pathOverrideNames: ["front", "flex"],
             pckg: info,
             typeDir,
             createFolder: config.front !== undefined,
