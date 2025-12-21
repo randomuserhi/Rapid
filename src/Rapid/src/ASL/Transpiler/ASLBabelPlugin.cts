@@ -11,6 +11,8 @@ export type BabelTypes = typeof BabelTypesNamespace;
 
 import { statement, statements } from "@babel/template";
 
+export const ASL_EXPORTS_KEYWORD = "__ASL_exports";
+export const ASL_REQUIRE_KEYWORD = "__ASL_require";
 
 export default function (babel: Babel): PluginObj {
     const t = babel.types;
@@ -23,7 +25,7 @@ export default function (babel: Babel): PluginObj {
                 const createExportStarHelper = () => {
                     // export * from './module'
                     if (exportStarIdentifier === undefined) {
-                        exportStarIdentifier = path.scope.generateUidIdentifier("ASL_ExportStar");
+                        exportStarIdentifier = path.scope.generateUidIdentifier("__ASL_exportStar");
                         path.unshiftContainer("body", statements.ast`const ${exportStarIdentifier.name} = (this && this.${exportStarIdentifier.name}) || function(m, exports) {
                             for (var p in m) if (p !== "default") exports[p] = m[p];
                         };`);
@@ -43,7 +45,7 @@ export default function (babel: Babel): PluginObj {
                             const localName = specifier.local.name;
                             switch (specifier.type) {
                             case "ImportDefaultSpecifier": {
-                                defaultSpecifiers.push(`const ${localName} = await require("${source}", { defaultImport: true })`);
+                                defaultSpecifiers.push(`const ${localName} = await ${ASL_REQUIRE_KEYWORD}("${source}", { defaultImport: true })`);
                             } break;
                             case "ImportSpecifier": {
                                 if (!t.isIdentifier(specifier.imported)) throw new Error(`Unsupported Identifier - TODO(support this...)`);
@@ -51,21 +53,21 @@ export default function (babel: Babel): PluginObj {
                                 importSpecifiers.push(importName === localName ? localName : `${importName}: ${localName}`);
                             } break;
                             case "ImportNamespaceSpecifier": {
-                                namespaceSpecifiers.push(`const ${localName} = await require("${source}")`);
+                                namespaceSpecifiers.push(`const ${localName} = await ${ASL_REQUIRE_KEYWORD}("${source}")`);
                             } break;
                             }
                         }
 
                         const statements = [];
                         if (defaultSpecifiers.length > 0) statements.push(defaultSpecifiers.join(";\n"));
-                        if (importSpecifiers.length > 0) statements.push(`const { ${importSpecifiers.join(", ")} } = await require("${source}")`);
+                        if (importSpecifiers.length > 0) statements.push(`const { ${importSpecifiers.join(", ")} } = await ${ASL_REQUIRE_KEYWORD}("${source}")`);
                         if (namespaceSpecifiers.length > 0) statements.push(namespaceSpecifiers.join(";\n"));
                         path.replaceWith(statement.ast`${statements.join(";\n")}`);
                     },
                     CallExpression(path) {
                         if (t.isImport(path.node.callee)) {
                             path.replaceWith(
-                                t.callExpression(t.identifier("require"), path.node.arguments)
+                                t.callExpression(t.identifier(ASL_REQUIRE_KEYWORD), path.node.arguments)
                             );
                         }
                     },
@@ -78,7 +80,7 @@ export default function (babel: Babel): PluginObj {
                             path.scope.bindings[name].referencePaths.forEach((refPath) => {
                                 if (refPath === path) return;
                                 refPath.replaceWith(t.memberExpression(
-                                    t.identifier("exports"),
+                                    t.identifier(ASL_EXPORTS_KEYWORD),
                                     t.identifier(name)
                                 ));
                             });
@@ -86,7 +88,7 @@ export default function (babel: Babel): PluginObj {
                                 if (refPath === path) return;
                                 if (t.isAssignmentExpression(refPath.node)) {
                                     refPath.get("left").replaceWith(t.memberExpression(
-                                        t.identifier("exports"),
+                                        t.identifier(ASL_EXPORTS_KEYWORD),
                                         t.identifier(name)
                                     ));
                                 }
@@ -102,7 +104,7 @@ export default function (babel: Babel): PluginObj {
 
                                 path.replaceWith(t.expressionStatement(t.assignmentExpression(
                                     '=',
-                                    t.memberExpression(t.identifier("exports"), t.identifier(id.name)),
+                                    t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), t.identifier(id.name)),
                                     t.functionExpression(undefined, params, body, generator, async)
                                 )));
 
@@ -114,13 +116,13 @@ export default function (babel: Babel): PluginObj {
                                     if (declarator.init) {
                                         return t.expressionStatement(t.assignmentExpression(
                                             '=',
-                                            t.memberExpression(t.identifier("exports"), t.identifier(declarator.id.name)),
+                                            t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), t.identifier(declarator.id.name)),
                                             declarator.init
                                         ));
                                     }
                                     return t.expressionStatement(t.assignmentExpression(
                                         '=',
-                                        t.memberExpression(t.identifier("exports"), t.identifier(declarator.id.name)),
+                                        t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), t.identifier(declarator.id.name)),
                                         t.identifier("undefined")
                                     ));
                                 }));
@@ -136,7 +138,7 @@ export default function (babel: Babel): PluginObj {
 
                                 path.replaceWith(t.expressionStatement(t.assignmentExpression(
                                     '=',
-                                    t.memberExpression(t.identifier("exports"), t.identifier(id.name)),
+                                    t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), t.identifier(id.name)),
                                     t.classExpression(undefined, superClass, body, decorators)
                                 )));
 
@@ -150,19 +152,19 @@ export default function (babel: Babel): PluginObj {
                                     case "ExportSpecifier": {
                                         return t.expressionStatement(t.assignmentExpression(
                                             '=',
-                                            t.memberExpression(t.identifier("exports"), specifier.exported),
+                                            t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), specifier.exported),
                                             specifier.local
                                         ));
                                     }
                                     case "ExportNamespaceSpecifier": {
                                         if (!source) throw new Error("ExportNamespaceSpecifier requires a source module");
 
-                                        return statement.ast`exports.${specifier.exported.name} = await require("${source.value}");`;
+                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.${specifier.exported.name} = await ${ASL_REQUIRE_KEYWORD}("${source.value}");`;
                                     }
                                     case "ExportDefaultSpecifier": {
                                         if (!source) throw new Error("ExportDefaultSpecifier requires a source module");
 
-                                        return statement.ast`exports.default = await require("${source.value}", { defaultImport: true });`;
+                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.default = await ${ASL_REQUIRE_KEYWORD}("${source.value}", { defaultImport: true });`;
                                     }
                                     }
                                 }));
@@ -178,7 +180,7 @@ export default function (babel: Babel): PluginObj {
                                 path.replaceWith(t.expressionStatement(
                                     t.assignmentExpression(
                                         '=',
-                                        t.memberExpression(t.identifier("exports"), t.identifier("default")),
+                                        t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), t.identifier("default")),
                                         t.functionExpression(id, params, body, generator, async)
                                     )
                                 ));
@@ -188,7 +190,7 @@ export default function (babel: Babel): PluginObj {
                                 path.replaceWith(t.expressionStatement(
                                     t.assignmentExpression(
                                         '=',
-                                        t.memberExpression(t.identifier("exports"), t.identifier("default")),
+                                        t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), t.identifier("default")),
                                         t.classExpression(id, superClass, body, decorators)
                                     )
                                 ));
@@ -196,7 +198,7 @@ export default function (babel: Babel): PluginObj {
                                 path.replaceWith(t.expressionStatement(
                                     t.assignmentExpression(
                                         '=',
-                                        t.memberExpression(t.identifier("exports"), t.identifier("default")),
+                                        t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), t.identifier("default")),
                                         declaration
                                     )
                                 ));
@@ -214,7 +216,7 @@ export default function (babel: Babel): PluginObj {
                             createExportStarHelper();
                             
                             // export * from './module'
-                            path.replaceWithMultiple(statements.ast`${exportStarIdentifier!.name}(await require("${source}"), exports);`);
+                            path.replaceWithMultiple(statements.ast`${exportStarIdentifier!.name}(await ${ASL_REQUIRE_KEYWORD}("${source}"), ${ASL_EXPORTS_KEYWORD});`);
                         } break;
                         }
                     }

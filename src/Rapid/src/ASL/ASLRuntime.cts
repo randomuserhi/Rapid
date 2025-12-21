@@ -6,6 +6,7 @@
 
 import File from "fs/promises";
 import Path from "path";
+import { ASL_EXPORTS_KEYWORD, ASL_REQUIRE_KEYWORD } from "./Transpiler/ASLBabelPlugin.cjs";
 
 let ASL_IS_CASE_SENSITIVE: boolean = true;
 export function setASLIsCaseSensitive(value: boolean) {
@@ -504,7 +505,7 @@ class ASLRegistry {
                             // The function has the parameters `require`, `module` and `exports` to provide the necessary keywords.
                             //
                             // Note that `require` refers to `aslImport`, in ASL scripts the keyword is `require` for simplicity.a
-                            const moduleFunc = (new Function(`return (async function(require, __ASL, exports) {${code}\n}).bind(undefined);\n//# sourceMappingURL=${path}.map`))() as ASLModuleFunc;
+                            const moduleFunc = (new Function(`return (async function(${ASL_REQUIRE_KEYWORD}, __ASL, ${ASL_EXPORTS_KEYWORD}) {${code}\n}).bind(undefined);\n//# sourceMappingURL=${path}.map`))() as ASLModuleFunc;
 
                             // Create module info
                             const aslModule = new ASLModule(mid, path);
