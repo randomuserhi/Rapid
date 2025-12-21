@@ -1104,7 +1104,7 @@ export class ASLEnvironment {
      * @param mid Module to unload
      * @param unloadedModules set of modules that were unloaded
      */
-    private _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>) {
+    private _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>, abortControllers: Set<AbortController>) {
         // If module is pending, cancel it
         const request = this.pending.get(mid);
         if (request !== undefined) {
@@ -1118,10 +1118,10 @@ export class ASLEnvironment {
         // Add to set of unloaded modules
         unloadedModules.add(mid);
 
-        // Call module destructors and delete module runtime
+        // collect module destructors and delete module runtime
         const runtime = this.moduleRuntimes.get(mid);
         if (runtime !== undefined) {
-            runtime["abort"].abort();
+            abortControllers.add(runtime["abort"]);
             this.moduleRuntimes.delete(mid);
         }
 
@@ -1131,7 +1131,7 @@ export class ASLEnvironment {
 
         for (const archetype of archetypesContainingModule) {
             for (const module of archetype.type) {
-                this._unload(module, unloadedModules);
+                this._unload(module, unloadedModules, abortControllers);
             }
         }
 
@@ -1182,9 +1182,19 @@ export class ASLEnvironment {
         });
 
         const unloadedModules = new Set<ASLModuleId>();
+        const abortControllers = new Set<AbortController>();
         for (const mid of mids) {
-            this._unload(mid, unloadedModules);
+            this._unload(mid, unloadedModules, abortControllers);
         }
+
+        // Trigger destructors, we do this after unload process such that
+        // if a destructor triggers a re-import, it doesnt break the archetype graph 
+        // (destructor is called during unload process, so subsequent unload after re-import may delete
+        // a still used archetype)
+        for (const controller of abortControllers) {
+            controller.abort();
+        }
+
         return unloadedModules;
     }
 
