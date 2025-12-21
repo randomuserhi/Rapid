@@ -1,9 +1,10 @@
+
 import { ASLEnvironment, ASLPath, defaultImportHook, getASLBaseURL, registry, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
 
 const APP_LINK_HOOK = "__linkRapidApp";
 
 export const app = {
-    name: ASLPath.pckgName(window.location.pathname)
+    name: ASLPath.first(window.location.pathname)
 };
 
 // Setup ASL base URL
@@ -29,7 +30,7 @@ function loadEntry(entry: string) {
             if (ASLPath.startsWithSeparator(path)) path = "/" + path;
 
             // Resolve rapidlib paths
-            if (ASLPath.pckgName(path) === "rapid") {
+            if (ASLPath.first(path) === "rapid") {
                 // Amend extension if none is given, all rapidlib paths are .mjs scripts
                 // so we can accept no extension and implicitly add extension
                 if (!ASLPath.endsWithSeparator(path) && ASLPath.extname(path) === "") path += ".mjs";

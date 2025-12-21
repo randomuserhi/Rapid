@@ -102,8 +102,8 @@ function fixASLExt(path: string): string {
     return `${path.slice(0, location.start)}${ASL_EXTENSION_JS}${path.slice(location.end)}`;
 }
 
-/** Find package name from an import path */
-function findPckgName(path: string): { start: number, end: number } | undefined {
+/** Find first item from an import path */
+function findFirst(path: string): { start: number, end: number } | undefined {
     let start = -1;
     let end = 0;
     let validCharacters = false;
@@ -122,8 +122,8 @@ function findPckgName(path: string): { start: number, end: number } | undefined 
 }
 
 /** Gets package name from an import path */
-function pckgName(path: string): string {
-    const location = findPckgName(path);
+function first(path: string): string {
+    const location = findFirst(path);
     if (location === undefined) return "";
     return path.slice(location.start, location.end);
 }
@@ -140,11 +140,11 @@ function startsWithSeparator(path: string): boolean {
 }
 
 export const ASLPath = {
-    pckgName,
+    first,
     extname,
     fixASLExt,
     findExtname,
-    findPckgName,
+    findFirst,
     endsWithSeparator,
     startsWithSeparator
 };
@@ -182,7 +182,7 @@ export const ASL_EXTENSION_JS = `${ASL_EXTENSION}.js`;
 export const ASL_EXTENSION_JS_MAP = `${ASL_EXTENSION}.js.map`;
 
 /** Module ID type */
-type ASLModuleId = number;
+export type ASLModuleId = number;
 
 /**
  * Module object, represents exports for a module.
@@ -953,7 +953,7 @@ export class ASLEnvironment {
             throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
         }).then((exports) => {
             // Pass through runtime hook
-            return this.runtimeHook(runtime, exports);   
+            return this.runtimeHook(runtime, exports);
         }).then((exports) => {
             if (exports === undefined) throw new Error("ASL `exports` object was undefined.");
 
@@ -1043,7 +1043,7 @@ export class ASLEnvironment {
                         // Assign archetype
                         context.moduleArchetype.set(mid, context.traverse(context.rootArchetype, mid));
 
-                        // Create module data
+                        // Create module runtime
                         const runtime = new ASLModuleRuntime(result.item.info);
                         // TODO(randomuserhi): Better Error
                         if (context.moduleRuntimes.has(mid)) throw new Error("ModuleData for this module already exists. This should never happen!");

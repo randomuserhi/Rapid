@@ -7,7 +7,7 @@ import type Stream from "stream";
 import { pipeline } from "stream/promises";
 import { MapLike } from "typescript";
 import { WebSocketServer } from "ws";
-import { ASLEnvironment, ASLModuleInfo, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
+import { ASL_EXTENSION_JS, ASLEnvironment, ASLModuleId, ASLModuleInfo, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 import { Router } from "./Router.cjs";
 
@@ -107,15 +107,8 @@ function filePrefixMatch(path: string, patterns: MapLike<any>): { pattern: strin
     return matchedPattern;
 }
 
-/**  */
+/** TODO(randomuserhi): Move to some http utility module */
 type RestMethod = "GET" | "POST";
-
-/**  */
-interface Route {
-    path: string;
-    method: RestMethod;
-    handler: (req: Http.IncomingMessage, res: Http.ServerResponse) => void;
-}
 
 /**  */
 const mimeTypes = {
@@ -175,7 +168,7 @@ class RapidLib {
 
             // Trigger app link hook so rapid standard library functions know what app they are associated with
             if (Object.prototype.hasOwnProperty.call(obj, RapidLib.APP_LINK_HOOK)) {
-                obj = obj![RapidLib.APP_LINK_HOOK](this.app);
+                obj = obj![RapidLib.APP_LINK_HOOK](this.app, obj);
             }
         }
 
@@ -195,16 +188,17 @@ async function serveResource(path: string, res: Http.ServerResponse) {
     await pipeline(stream, res);
 }
 
-/** A single app instance that represents a package */
+/** 
+ * A single app instance that represents a package.
+ * 
+ * Manages its own standard library instance as well as requests.
+ */
 export class RapidApp {
     /** The runtime this app is part of */
     private readonly runtime: RapidRuntime;
 
     /** Package */
     public pckgInfo: PackageInfo;
-
-    /** ASL environment of the app */
-    private readonly environment: ASLEnvironment;
 
     /** Routes that are used to resolve certain URL paths */
     public readonly httpRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown]>>();
@@ -213,7 +207,7 @@ export class RapidApp {
     public readonly wsRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown]>>();
 
     /** RapidLib object */
-    private rapidLib: RapidLib;
+    public rapidLib: RapidLib;
 
     /** List of static paths to check */
     private staticFrontPaths: string[];
@@ -231,133 +225,6 @@ export class RapidApp {
 
         // Create rapid lib object
         this.rapidLib = new RapidLib(this);
-
-        // Initialize ASL environment
-        this.environment = new ASLEnvironment();
-        this.environment.importHook = this.aslImportHook.bind(this);
-    }
-
-    /** Import hook to resolve ASL environment paths */
-    private async aslImportHook(module: ASLModuleInfo, path: string): Promise<string | ASLModuleObject> {
-        path = ASLPath.fixASLExt(path);
-
-        const {
-            baseDir,
-            buildDir
-        } = this.pckgInfo;
-
-        if (path.startsWith(".")) {
-            // Handle relative import
-
-            // Construct the full path given the module path
-            const fullPath = Path.resolve(Path.join(module.dir, path));
-
-            // If it exists, return the path
-            if (await fileExists(fullPath)) return fullPath;
-
-            let resolvedPath: string;
-
-            // Otherwise, resolve the path by checking build / non-build directory paths
-            // depending on which we started in
-            const inBuildDir = fullPath.startsWith(buildDir);
-            if (inBuildDir) {
-                // If we are in build directory check non build directory
-                const relPath = Path.relative(buildDir, fullPath);
-                resolvedPath = Path.join(baseDir, relPath);
-                if (await fileExists(resolvedPath)) return resolvedPath;
-            } else {
-                // If we are in non build directory check build directory
-                const relPath = Path.relative(baseDir, fullPath);
-                resolvedPath = Path.join(buildDir, relPath);
-                if (await fileExists(resolvedPath)) return resolvedPath;
-            }
-        } else if (Path.extname(path) === "") {
-            // For non-relative imports with no extension, just do a basic require
-            // This is for standard library node modules like "path" or "file" etc...
-
-            // Since module resolution is typically handled by unix paths, convert backslash to unix style slashes
-            path = path.replace("\\", "/");
-
-            // Special case for rapidlib:
-            if (ASLPath.pckgName(path) === "rapid") {
-                return this.rapidLib.resolve(path);
-            }
-
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            return require(path);
-        } else {
-            // Resolve absolute paths
-
-            // Check package path (if it is a dependency import)
-            const pckgName = ASLPath.pckgName(path);
-
-            // Special case for rapidlib:
-            if (pckgName === "rapid") {
-                return this.rapidLib.resolve(path);
-            }
-
-            const pckgInfo = await this.runtime.packageRegistry.findPckg(pckgName);
-            if (pckgInfo !== undefined) {
-                const {
-                    backDir,
-                    backBuildDir,
-                    flexDir,
-                    flexBuildDir
-                } = pckgInfo;
-                
-                // Trim the package name from the path
-                path = Path.relative(pckgName, path);
-                
-                if (path !== "") {
-                    // Check if it is in build folder first
-                    let resolvedPath = Path.join(backBuildDir, path);
-                    if (await fileExists(resolvedPath)) return resolvedPath;
-                    
-                    // Otherwise check base folder
-                    resolvedPath = Path.join(backDir, path);
-                    if (await fileExists(resolvedPath)) return resolvedPath;
-                    
-                    // Otherwise check flex build folder
-                    resolvedPath = Path.join(flexBuildDir, path);
-                    if (await fileExists(resolvedPath)) return resolvedPath;
-                    
-                    // Otherwise check flex folder
-                    resolvedPath = Path.join(flexDir, path);
-                    if (await fileExists(resolvedPath)) return resolvedPath;
-                }
-
-                const config = await pckgInfo.config(this.runtime.isWatching(this.pckgInfo));
-
-                // Otherwise check package paths
-                if (config.back?.paths !== undefined) {
-                    const paths = config.back.paths;
-                    const match = filePrefixMatch(path, paths);
-                    if (match !== undefined) {
-                        for (const path of paths[match.pattern]) {
-                            let resolvedPath: string;
-                            if (Path.basename(path) === "*") {
-                                resolvedPath = Path.join(baseDir, Path.dirname(path), match.postfix);
-                            } else {
-                                resolvedPath = Path.join(baseDir, path);
-                            }
-                            if (await fileExists(resolvedPath)) return resolvedPath;
-                        }
-                    }
-                }
-            }
-        }
-
-        throw new Error(`Could not find: ${path}`);
-    }
-
-    /** Loads and runs the package's entry point */
-    public async loadEntry() {
-        const config = await this.pckgInfo.config(this.runtime.isWatching(this.pckgInfo));
-        let entryPoint = config.back?.entry;
-        if (entryPoint !== undefined) {
-            entryPoint = Path.join(this.pckgInfo.baseDir, ".build", "back", ASLPath.fixASLExt(entryPoint));
-            await this.environment.fetch(entryPoint);
-        }
     }
 
     /** Handle connection upgrade requests */
@@ -437,8 +304,19 @@ export class RapidApp {
 }
 
 export class RapidRuntime {
-    /** Stores currently running app instances */
-    private instances = new Map<string, RapidApp>();
+    /** 
+     * Stores currently running app instances
+     */
+    private apps = new Map<string, RapidApp>();
+
+    /** 
+     * Maps a module to its app.
+     * Used such that each module can be associated with its running app.
+     */
+    private midToApp = new Map<ASLModuleId, RapidApp>();
+
+    /** ASL environment */
+    private environment = new ASLEnvironment();
 
     /** Set of packages that are being watched */
     private readonly watchList = new Map<string, PackageInfo>();
@@ -456,24 +334,6 @@ export class RapidRuntime {
     private webSocketServer: WebSocketServer = new WebSocketServer({ noServer: true });
 
     /**
-     * Broadcast a message on the rapid websocket to all clients
-     * 
-     * @param route 
-     * @param body 
-     */
-    // TODO(randomuserhi): A more sophisticated web socket API
-    private broadcast(route: "hotReload", body: any) {
-        for (const client of this.webSocketServer.clients) {
-            if (client.readyState !== client.OPEN) continue;
-            client.send(JSON.stringify({
-                pckg: "rapid",
-                route,
-                body
-            }));
-        }
-    }
-
-    /**
      * 
      * @param directories 
      * @param typeDir 
@@ -482,6 +342,9 @@ export class RapidRuntime {
         this.packageRegistry = new PackageRegistry(directories);
         this.packageWatchBuilder = new PackageWatchBuilder(this.packageRegistry, typeDir);
         this.packageBuilder = new PackageBuilder(typeDir);
+
+        // setup ASL environment
+        this.environment.importHook = this.aslImportHook.bind(this);
 
         // Manage invalidation on watcher builds
         const directoryPatterns: MapLike<string> = {};
@@ -520,10 +383,192 @@ export class RapidRuntime {
         };
     }
 
+    /**
+     * Loads the entry point for a given app
+     * @param app 
+     * @param pckgInfo 
+     */
+    private async loadEntry(app: RapidApp) {
+        const config = await app.pckgInfo.config(this.isWatching(app.pckgInfo));
+        let entryPoint = config.back?.entry;
+        if (entryPoint !== undefined) {
+            entryPoint = Path.join(app.pckgInfo.baseDir, ".build", "back", ASLPath.fixASLExt(entryPoint));
+            
+            // Ensure to associate the entry point with this app
+            this.midToApp.set(registry.getMid(entryPoint), app);
+            
+            await this.environment.fetch(entryPoint);
+        }
+    }
+
+    /** 
+     * Helper for asl import hook, resolves the initial path 
+     * 
+     * @returns The regular import hook result as well as the package info of the app the imported module belongs to.
+     *          Undefined if the imported module is not associated with an app.
+     */
+    private async _aslImportHook(module: ASLModuleInfo, path: string): Promise<[string | ASLModuleObject, PackageInfo | undefined]> {
+        path = ASLPath.fixASLExt(path);
+
+        // Get the module's associated app
+        const app = this.midToApp.get(module.mid);
+        if (app === undefined) {
+            throw new Error(`Could not find module's associated app: ${module.path}`);
+        }
+
+        const {
+            baseDir,
+            buildDir
+        } = app.pckgInfo;
+
+        if (path.startsWith(".")) {
+            // Handle relative import
+
+            // Construct the full path given the module path
+            const fullPath = Path.resolve(Path.join(module.dir, path));
+
+            // If it exists, return the path
+            if (await fileExists(fullPath)) return [fullPath, app.pckgInfo];
+
+            let resolvedPath: string;
+
+            // Otherwise, resolve the path by checking build / non-build directory paths
+            // depending on which we started in
+            const inBuildDir = fullPath.startsWith(buildDir);
+            if (inBuildDir) {
+                // If we are in build directory check non build directory
+                const relPath = Path.relative(buildDir, fullPath);
+                resolvedPath = Path.join(baseDir, relPath);
+                if (await fileExists(resolvedPath)) return [resolvedPath, app.pckgInfo];
+            } else {
+                // If we are in non build directory check build directory
+                const relPath = Path.relative(baseDir, fullPath);
+                resolvedPath = Path.join(buildDir, relPath);
+                if (await fileExists(resolvedPath)) return [resolvedPath, app.pckgInfo];
+            }
+        } else if (Path.extname(path) === "") {
+            // For non-relative imports with no extension, just do a basic require
+            // This is for standard library node modules like "path" or "file" etc...
+
+            // Since module resolution is typically handled by unix paths, convert backslash to unix style slashes
+            path = path.replace("\\", "/");
+
+            // Special case for rapidlib:
+            if (ASLPath.first(path) === "rapid") {
+                return [app.rapidLib.resolve(path), undefined];
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            return [require(path), undefined];
+        } else {
+            // Resolve absolute paths
+
+            // Check package path (if it is a dependency import)
+            const pckgName = ASLPath.first(path);
+
+            // Special case for rapidlib:
+            if (pckgName === "rapid") {
+                return [app.rapidLib.resolve(path), undefined];
+            }
+
+            const pckgInfo = await this.packageRegistry.findPckg(pckgName);
+            if (pckgInfo !== undefined) {
+                const {
+                    backDir,
+                    backBuildDir,
+                    flexDir,
+                    flexBuildDir
+                } = pckgInfo;
+                
+                // Trim the package name from the path
+                path = Path.relative(pckgName, path);
+                
+                if (path !== "") {
+                    // Check if it is in build folder first
+                    let resolvedPath = Path.join(backBuildDir, path);
+                    if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
+                    
+                    // Otherwise check base folder
+                    resolvedPath = Path.join(backDir, path);
+                    if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
+                    
+                    // Otherwise check flex build folder
+                    resolvedPath = Path.join(flexBuildDir, path);
+                    if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
+                    
+                    // Otherwise check flex folder
+                    resolvedPath = Path.join(flexDir, path);
+                    if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
+                }
+
+                const config = await pckgInfo.config(this.isWatching(app.pckgInfo));
+
+                // Otherwise check package paths
+                if (config.back?.paths !== undefined) {
+                    const paths = config.back.paths;
+                    const match = filePrefixMatch(path, paths);
+                    if (match !== undefined) {
+                        for (const path of paths[match.pattern]) {
+                            let resolvedPath: string;
+                            if (Path.basename(path) === "*") {
+                                resolvedPath = Path.join(baseDir, Path.dirname(path), match.postfix);
+                            } else {
+                                resolvedPath = Path.join(baseDir, path);
+                            }
+                            if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
+                        }
+                    }
+                }
+            }
+        }
+
+        throw new Error(`Could not find: ${path}`);
+    }
+
+    /** Import hook to resolve ASL environment paths */
+    private async aslImportHook(module: ASLModuleInfo, path: string): Promise<string | ASLModuleObject> {
+        const [resolved, pckgInfo] = await this._aslImportHook(module, path);
+        if (pckgInfo !== undefined && typeof resolved === "string" && ASLPath.extname(resolved) === ASL_EXTENSION_JS) {
+            // Map mid to a rapid app
+
+            let app = this.apps.get(pckgInfo.name);
+            if (app === undefined) {
+                // auto watch imported apps
+                this.watch(pckgInfo.name);
+
+                // launch app if needed
+                app = new RapidApp(this, pckgInfo);
+                this.apps.set(pckgInfo.name, app);
+            }
+
+            this.midToApp.set(registry.getMid(resolved), app);
+        }
+
+        return resolved;
+    }
+
+    /**
+     * Broadcast a message on the rapid websocket to all clients
+     * 
+     * @param route 
+     * @param body 
+     */
+    // TODO(randomuserhi): A more sophisticated web socket API
+    private broadcast(route: "hotReload", body: any) {
+        for (const client of this.webSocketServer.clients) {
+            if (client.readyState !== client.OPEN) continue;
+            client.send(JSON.stringify({
+                pckg: "rapid",
+                route,
+                body
+            }));
+        }
+    }
+
     /** Handle connection upgrade requests */
     private async onUpgrade(req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>) {
         try {
-            const pckgNameLocation = ASLPath.findPckgName(req.url!);
+            const pckgNameLocation = ASLPath.findFirst(req.url!);
             if (pckgNameLocation === undefined) {
                 // TODO(randomuserhi): Write HTTP header for rejection (e.g code 404 etc...)
                 socket.destroy();
@@ -545,7 +590,7 @@ export class RapidRuntime {
                 return;
             }
     
-            const instance = this.instances.get(pckgName);
+            const instance = this.apps.get(pckgName);
             if (instance === undefined) {
                 // TODO(randomuserhi): Write HTTP header for rejection (e.g code 404 etc...)
                 socket.destroy();
@@ -567,7 +612,7 @@ export class RapidRuntime {
             // TODO(randomuserhi): Implement redirect on basic case for "/"
             //                     User can specify what they want for the default app
 
-            const pckgNameLocation = ASLPath.findPckgName(req.url!);
+            const pckgNameLocation = ASLPath.findFirst(req.url!);
             if (pckgNameLocation === undefined) {
                 res.statusCode = 404;
                 res.end("Not valid URL");
@@ -620,8 +665,8 @@ export class RapidRuntime {
                 return;
             }
     
-            let instance = this.instances.get(pckgName);
-            if (instance === undefined) {
+            let app = this.apps.get(pckgName);
+            if (app === undefined) {
                 const pckgInfo = await this.packageRegistry.findPckg(pckgName);
                 if (pckgInfo === undefined) {
                     res.statusCode = 404;
@@ -629,21 +674,24 @@ export class RapidRuntime {
                     return;
                 }
     
-                // Auto watch launched apps
-                // TODO(randomuserhi): Should be moved to a debug mode
-                //                     typescript is only active when developing, not when using
-                this.watch(pckgInfo.name);
-    
-                // Launch app instance
-                instance = new RapidApp(this, pckgInfo);
-                await instance.loadEntry();
-    
-                this.instances.set(pckgName, instance);
+                // Check again incase 2 async calls reach here at the same time
+                app = this.apps.get(pckgName);
+                if (app === undefined) {
+                    // Auto watch launched apps
+                    this.watch(pckgInfo.name);
+        
+                    // Launch app instance
+                    app = new RapidApp(this, pckgInfo);
+                    this.apps.set(pckgName, app);
+
+                    // Load entry point
+                    await this.loadEntry(app);
+                }
             }
     
             // Pass request onto the given package
             req.url = pckgUrl;
-            instance.onRequest(req, res);
+            app.onRequest(req, res);
         } catch (err) {
             res.statusCode = 500;
             res.end("Internal Server Error");

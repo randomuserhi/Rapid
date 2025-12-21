@@ -6,11 +6,14 @@ import Http from "http";
 import type { ASLModuleRuntime } from "../ASL/ASLRuntime.cjs";
 import { PatternMatch, Router } from "../Router.cjs";
 
-function get(this: RapidApp, runtime: ASLModuleRuntime, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
-    let router = this.httpRoutes.get("GET");
+/** TODO(randomuserhi): Move to some http utility module */
+type RestMethod = "GET" | "POST";
+
+function route(this: RapidApp, runtime: ASLModuleRuntime, method: RestMethod, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
+    let router = this.httpRoutes.get(method);
     if (router === undefined) {
         router = new Router();
-        this.httpRoutes.set("GET", router);
+        this.httpRoutes.set(method, router);
     }
     
     router.add(path, cb);
@@ -21,7 +24,7 @@ function get(this: RapidApp, runtime: ASLModuleRuntime, path: string, cb: (match
     return cb;
 }
 
-function remove(this: RapidApp, method: "GET", cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
+function remove(this: RapidApp, method: RestMethod, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
     let router = this.httpRoutes.get(method);
     if (router === undefined) {
         router = new Router();
@@ -33,6 +36,7 @@ function remove(this: RapidApp, method: "GET", cb: (match: PatternMatch, req: Ht
 
 // Cache bound functions after linking to app (used by ASLRuntime linker)
 const __linkCache = {
+    name: undefined! as string,
     remove
 };
 
@@ -40,17 +44,19 @@ const __linkCache = {
 function __linkASLRuntime(this: RapidApp, runtime: ASLModuleRuntime) {
     return {
         app: {
-            get: get.bind(this, runtime),
+            route: route.bind(this, runtime),
             ...__linkCache
         }
     };
 }
 
 // Rapid App hook
-export function __linkRapidApp(app: RapidApp) {
+export function __linkRapidApp(app: RapidApp, exports: any) {
     __linkCache.remove = remove.bind(app);
+    __linkCache.name = app.pckgInfo.name;
 
     return {
+        ...exports,
         __linkASLRuntime: __linkASLRuntime.bind(app)
     };
 }

@@ -108,8 +108,8 @@ function fixASLExt(path: string): string {
     return `${path.slice(0, location.start)}${ASL_EXTENSION_JS}${path.slice(location.end)}`;
 }
 
-/** Find package name from an import path */
-function findPckgName(path: string): { start: number, end: number } | undefined {
+/** Find first item from an import path */
+function findFirst(path: string): { start: number, end: number } | undefined {
     let start = -1;
     let end = 0;
     let validCharacters = false;
@@ -128,8 +128,8 @@ function findPckgName(path: string): { start: number, end: number } | undefined 
 }
 
 /** Gets package name from an import path */
-function pckgName(path: string): string {
-    const location = findPckgName(path);
+function first(path: string): string {
+    const location = findFirst(path);
     if (location === undefined) return "";
     return path.slice(location.start, location.end);
 }
@@ -146,11 +146,11 @@ function startsWithSeparator(path: string): boolean {
 }
 
 export const ASLPath = {
-    pckgName,
+    first,
     extname,
     fixASLExt,
     findExtname,
-    findPckgName,
+    findFirst,
     endsWithSeparator,
     startsWithSeparator
 };
@@ -188,7 +188,7 @@ export const ASL_EXTENSION_JS = `${ASL_EXTENSION}.js`;
 export const ASL_EXTENSION_JS_MAP = `${ASL_EXTENSION}.js.map`;
 
 /** Module ID type */
-type ASLModuleId = number;
+export type ASLModuleId = number;
 
 /**
  * Module object, represents exports for a module.
