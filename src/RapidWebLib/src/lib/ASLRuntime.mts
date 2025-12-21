@@ -225,11 +225,8 @@ export class ASLModuleRuntime {
     /** Path to the given module */
     public readonly path: string;
 
-    /** 
-     * Determines whether the exports are writeable.
-     * When a module has finished execution, the exports are marked as readonly.
-     */
-    private mutable: boolean = true;
+    /** module mid */
+    public readonly mid: ASLModuleId;
 
     /**
      * Module exports object
@@ -238,17 +235,9 @@ export class ASLModuleRuntime {
 
     constructor(info: ASLModuleInfo) {
         this.path = info.path;
-        this.exports = new Proxy<ASLModuleObject>({}, {
-            set: this.exportProxySetHandler.bind(this)
-        });
+        this.mid = info.mid;
+        this.exports = {};
     }
-
-    /** Proxy handler for exports to check mutability */
-    private exportProxySetHandler(this: ASLModuleRuntime, exports: ASLModuleObject, prop: string | symbol, newValue: any) {
-        if (!this.mutable) throw new Error(`You cannot alter exports once a module has loaded.`);
-        exports[prop] = newValue;
-        return true;
-    };
 
     /** Abort controller to handle module destruction */
     private readonly abort = new AbortController();
@@ -268,7 +257,6 @@ export class ASLModuleRuntime {
 
     /** Mark module as ready */
     public ready() {
-        this.mutable = false;
         this.resolve(this.exports);
     }
 }
@@ -553,16 +541,6 @@ class ASLRegistry {
     }
 
     /**
-     * Proxy handler for `module` metadata object in ASL
-     */
-    private static moduleProxyHandler: ProxyHandler<any> = {
-        set() {
-            // silently immutable
-            return false;
-        }
-    } as const;
-
-    /**
      * Executes the given module, providing the necessary parameters.
      * 
      * @param moduleFunc The ASLModuleFunc of the module being executed.
@@ -572,8 +550,8 @@ class ASLRegistry {
             // Assign resolve object for marking execution completion
             runtime["resolve"] = resolve;
 
-            // Create a proxy to make the runtime readonly as an API
-            const __ASL = new Proxy(runtime, ASLRegistry.moduleProxyHandler);
+            // runtime is the ASL api
+            const __ASL = runtime;
 
             moduleFunc(envImport.bind(undefined, moduleInfo, runtime), __ASL, runtime.exports)
                 .then(() => runtime.ready())
@@ -712,16 +690,10 @@ class ASLArchetype {
 // Default runtime hook function name
 const RUNTIME_HOOK_NAME = "__linkASLRuntime";
 
-const RUNTIME_HOOK_PROXY_HANDLER: ProxyHandler<any> = {
-    set() {
-        throw new Error(`You cannot alter exports once a module has loaded.`);
-    }
-};
-
-/** By default call hook function and wrap newly returned exports in a readonly proxy. */
+/** By default call hook function. */
 export const defaultRuntimeHook = async (runtime: ASLModuleRuntime, object: ASLModuleObject) => {
     if (Object.prototype.hasOwnProperty.call(object, RUNTIME_HOOK_NAME)) {
-        return new Proxy(object[RUNTIME_HOOK_NAME](runtime), RUNTIME_HOOK_PROXY_HANDLER);
+        return object[RUNTIME_HOOK_NAME](runtime);
     }
     return object;
 };

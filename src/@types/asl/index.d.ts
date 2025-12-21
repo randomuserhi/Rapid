@@ -3,6 +3,8 @@ export { };
 type ASLModuleObject = Record<PropertyKey, any>;
 
 declare global {
+    type ASLModuleId = number;
+
     interface ASLModuleInfo {
         /** Module path (normalized) */
         readonly path: string;
@@ -14,6 +16,8 @@ declare global {
     interface ASLModuleRuntime {
         /** Path to module file */
         readonly path: string;
+
+        readonly mid: ASLModuleId
 
         /** 
          * Marks the module's exports as ready prior to end of module execution.
