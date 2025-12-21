@@ -54,4 +54,6 @@ declare global {
     type __linkASLRuntime = (runtime: ASLModuleRuntime, exports: ASLModuleObject) => ASLModuleObject | Promise<ASLModuleObject>;
 
     const __ASL: ASLModuleRuntime;
+
+    const exports: ASLModuleObject;
 }
