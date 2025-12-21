@@ -53,37 +53,42 @@ if (rapid !== undefined) {
     
             if (!path.startsWith(".")) {
                 // Resolve non-relative imports
-    
-                // Ensure path forms a valid url, it must start with a `/`
-                if (ASLPath.startsWithSeparator(path)) path = "/" + path;
-    
-                // Resolve rapidlib paths
-                if (ASLPath.first(path) === "rapid") {
-                    // Amend extension if none is given, all rapidlib paths are .mjs scripts
-                    // so we can accept no extension and implicitly add extension
-                    if (!ASLPath.endsWithSeparator(path) && ASLPath.extname(path) === "") path += ".mjs";
-    
-                    // Import directly
-                    let obj = await import(new URL(path, getASLBaseURL()).toString()); 
-    
-                    // Trigger App link hook so rapid standard library functions
-                    // know what app they are associated with
-                    if (Object.prototype.hasOwnProperty.call(obj, APP_LINK_HOOK)) {
-                        let app = midToApp.get(module.mid);
-                        if (app === undefined) {
-                            // Launch app if necessary
-                            let name = ASLPath.first(new URL(module.path).pathname);
-                            if (!IS_CASE_SENSITIVE) name = name.toLowerCase();
 
-                            app = new App(name);
-                            
-                            midToApp.set(module.mid, app);
+                // Check whether path resolves to the same base URL
+                // if not, then its a full URL to an external resource and we should not handle it
+                const url = new URL(path, getASLBaseURL());
+                if (url.origin === getASLBaseURL()?.origin) {
+                    // Get pathname as it ensure path forms a valid url
+                    path = url.pathname;
+        
+                    // Resolve rapidlib paths
+                    if (ASLPath.first(path) === "rapid") {
+                        // Amend extension if none is given, all rapidlib paths are .mjs scripts
+                        // so we can accept no extension and implicitly add extension
+                        if (!ASLPath.endsWithSeparator(path) && ASLPath.extname(path) === "") path += ".mjs";
+        
+                        // Import directly
+                        let obj = await import(new URL(path, getASLBaseURL()).toString()); 
+        
+                        // Trigger App link hook so rapid standard library functions
+                        // know what app they are associated with
+                        if (Object.prototype.hasOwnProperty.call(obj, APP_LINK_HOOK)) {
+                            let app = midToApp.get(module.mid);
+                            if (app === undefined) {
+                                // Launch app if necessary
+                                let name = ASLPath.first(new URL(module.path).pathname);
+                                if (!IS_CASE_SENSITIVE) name = name.toLowerCase();
+
+                                app = new App(name);
+                                
+                                midToApp.set(module.mid, app);
+                            }
+
+                            obj = obj[APP_LINK_HOOK](app, obj);
                         }
-
-                        obj = obj[APP_LINK_HOOK](app, obj);
+        
+                        return obj;
                     }
-    
-                    return obj;
                 }
             }
     

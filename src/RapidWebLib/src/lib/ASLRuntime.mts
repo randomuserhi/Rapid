@@ -5,8 +5,9 @@
  */
 
 /** Base URL used for file resolution */
-let ASL_BASE_URL: string | URL | undefined = undefined;
+let ASL_BASE_URL: URL | undefined = undefined;
 export function setASLBaseURL(url: string | URL) {
+    if (typeof url === "string") url = new URL(url);
     ASL_BASE_URL = url;
 }
 export function getASLBaseURL() {
@@ -251,7 +252,15 @@ export class ASLModuleRuntime {
     public readonly require: ASLImportFunc = undefined!;
 
     constructor(info: ASLModuleInfo) {
-        this.path = info.path;
+        const url = new URL(info.path, ASL_BASE_URL);
+        if (url.origin === ASL_BASE_URL?.origin) {
+            // Convert path to short hand (pathname) if origin is shared,
+            this.path = url.pathname;
+        } else {
+            // Otherwise maintain full URL
+            this.path = url.toString();
+        }
+
         this.mid = info.mid;
         this.exports = {};
     }
