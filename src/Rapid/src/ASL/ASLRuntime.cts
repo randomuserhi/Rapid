@@ -191,10 +191,10 @@ export type ASLModuleId = number;
 export type ASLModuleObject = Record<PropertyKey, any>;
 
 /** Function that imports another module from an ASL module execution context. */
-type ASLEnvImportFunc = (moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: string, options?: ASLImportOptions) => Promise<ASLModuleObject>;
+type ASLEnvImportFunc = (moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: string, options?: Partial<ASLImportOptions>) => Promise<ASLModuleObject>;
 
 /** Function that imports another module from an ASL module execution context. */
-type ASLImportFunc = (path: string, options?: ASLImportOptions) => Promise<ASLModuleObject>;
+type ASLImportFunc = (path: string, options?: Partial<ASLImportOptions>) => Promise<ASLModuleObject>;
 
 /**
  * ASL module function.
@@ -209,8 +209,20 @@ type ASLModuleFunc = (aslImport: ASLImportFunc, __ASL: any, exports: ASLModuleOb
  * Import options when using `require` in an ASL script
  */
 interface ASLImportOptions {
-    /** Is the type of import a default import? `import X from "X.js"` */
+    /** 
+     * Is the type of import a default import? `import X from "X.js"` 
+     * 
+     * default: false
+     */
     defaultImport: boolean;
+
+    /** 
+     * Should the import count as a dependency? 
+     * If so, then invalidating that import also invalidates this module.
+     * 
+     * default: true
+     */
+    updateDependencyGraph: boolean;
 }
 
 /**
@@ -227,6 +239,11 @@ export class ASLModuleRuntime {
      * Module exports object
      */
     public readonly exports: ASLModuleObject;
+
+    /**
+     * Require func
+     */
+    public readonly require: ASLImportFunc = undefined!;
 
     constructor(info: ASLModuleInfo) {
         this.path = info.path;
@@ -547,13 +564,14 @@ class ASLRegistry {
      */
     private execModule(moduleInfo: ASLModuleInfo, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc, runtime: ASLModuleRuntime): ASLRequest<ASLModuleObject> {
         return ASLRequest((resolve, reject) => {
-            // Assign resolve object for marking execution completion
+            // Setup runtime
             runtime["resolve"] = resolve;
+            (runtime as any).require = envImport.bind(undefined, moduleInfo, runtime);
 
             // runtime is the ASL api
             const __ASL = runtime;
 
-            moduleFunc(envImport.bind(undefined, moduleInfo, runtime), __ASL, runtime.exports)
+            moduleFunc(runtime.require, __ASL, runtime.exports)
                 .then(() => runtime.ready())
                 .catch((err) => reject(err));
         });
@@ -764,7 +782,7 @@ export class ASLEnvironment {
     /**
      * Maps a module id to all archetypes that contain said type
      */
-    private readonly typemap = new Map<ASLModuleId, ASLArchetype[]>();
+    private readonly typemap = new Map<ASLModuleId, Set<ASLArchetype>>();
 
     /**
      * Import hook that the user can define to transform paths before they are used
@@ -834,10 +852,10 @@ export class ASLEnvironment {
         // register to typemap
         let archList = this.typemap.get(mid);
         if (archList === undefined) {
-            archList = [];
+            archList = new Set();
             this.typemap.set(mid, archList);
         }
-        archList.push(arch);
+        archList.add(arch);
 
         // update to traversal cache
         from.addMap.set(mid, arch);
@@ -857,22 +875,25 @@ export class ASLEnvironment {
      * @param options Import options
      * @returns Promise that resolves to the module's exports
      */
-    private import(contextRef: ASLExecutionContext, moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: string, options?: ASLImportOptions): Promise<ASLModuleObject> {
+    private import(contextRef: ASLExecutionContext, moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: string, options?: Partial<ASLImportOptions>): Promise<ASLModuleObject> {
         // Create default options
         const parsedOptions: ASLImportOptions = {
-            defaultImport: false
+            defaultImport: false,
+            updateDependencyGraph: true
         };
 
         // Parse provided options
         if (options !== undefined) {
             for (const key in options) {
                 const k = key as keyof ASLImportOptions;
-                parsedOptions[k] = options[k];
+                if (options[k] !== undefined) {
+                    parsedOptions[k] = options[k];
+                }
             }
         }
 
         // Pass path through import hook
-        return this.importHook(moduleInfo, path, options).then(path => {
+        return this.importHook(moduleInfo, path, parsedOptions).then(path => {
             // If import hook returned an object directly, use that instead
             if (typeof path !== "string") {
                 // Manage default property to handle default imports
@@ -905,9 +926,11 @@ export class ASLEnvironment {
 
                 const env = contextRef.deref();
 
-                // Update modules archetype as approapriate
-                const arch = env.moduleArchetype.get(moduleInfo.mid)!;
-                env.moduleArchetype.set(moduleInfo.mid, env.traverse(arch, mid));
+                if (parsedOptions.updateDependencyGraph) {
+                    // Update modules archetype as approapriate
+                    const arch = env.moduleArchetype.get(moduleInfo.mid)!;
+                    env.moduleArchetype.set(moduleInfo.mid, env.traverse(arch, mid));
+                }
 
                 return env.fetch(mid, moduleInfo.mid).then((result) => {
                     if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
@@ -1109,12 +1132,19 @@ export class ASLEnvironment {
         dependencies.get(mid)?.delete(this);
 
         // Remove module from archetype book keeping
-        this.moduleArchetype.delete(mid);
+        const archetype = this.moduleArchetype.get(mid);
+        if (archetype !== undefined) {
+            for (const module of archetype.type) {
+                this.typemap.get(module)?.delete(archetype);
+            }
+            this.moduleArchetype.delete(mid);
+        }
         this.typemap.delete(mid);
 
-        // Detach from archetype graph cache (addMap, removeMap)
+        // Detach from archetype graph cache (addMap, removeMap) and general cache
         for (const archetype of archetypesContainingModule) {
             archetype.removeMap.get(mid)!.addMap.delete(mid);
+            this.archetypes.delete(archetype.typeId);
         }
     }
 

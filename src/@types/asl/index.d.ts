@@ -2,6 +2,25 @@ export { };
 
 type ASLModuleObject = Record<PropertyKey, any>;
 
+interface ASLImportOptions {
+    /** 
+     * Is the type of import a default import? `import X from "X.js"` 
+     * 
+     * default: false
+     */
+    defaultImport: boolean;
+
+    /** 
+     * Should the import count as a dependency? 
+     * If so, then invalidating that import also invalidates this module.
+     * 
+     * default: true
+     */
+    updateDependencyGraph: boolean;
+}
+
+type ASLImportFunc = (path: string, options?: Partial<ASLImportOptions>) => Promise<ASLModuleObject>;
+
 declare global {
     type ASLModuleId = number;
 
@@ -31,6 +50,11 @@ declare global {
         exports: ASLModuleObject;
 
         /**
+         * Require function
+         */
+        require: ASLImportFunc;
+
+        /**
          * Adds a callback that executes when the module is destructed
          * @param cb Callback to run
          */
@@ -55,5 +79,7 @@ declare global {
 
     const __ASL: ASLModuleRuntime;
 
-    const exports: ASLModuleObject;
+    const __ASL_require: ASLImportFunc;
+
+    const __ASL_exports: ASLModuleObject;
 }
