@@ -1,4 +1,5 @@
 import { ASLEnvironment, ASLModuleId, ASLPath, defaultImportHook, getASLBaseURL, registry, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
+import { Router } from "/rapid/Router.mjs";
 
 const APP_LINK_HOOK = "__linkRapidApp";
 
@@ -95,27 +96,32 @@ if (rapid !== undefined) {
         midToApp.set(registry.getMid(entryPoint), app);
         env.fetch(new URL(entryPoint, app.baseURL).toString());
 
-        // Try connecting to socket - need a reconnect ability if socket closes
         // TODO(randomuserhi): More sophisticated web socket API
+
+        // Internal web socket router
+        const router = new Router<[body: any]>();
+        router.add("hotReload", (match, files: { route: string }[]) => {
+            const paths = [];
+            for (const path of files) {
+                paths.push(new URL(path.route, window.location.origin).toString());
+            }
+            registry.invalidate(paths);
+        });
+
+        // Try connecting to socket - need a reconnect ability if socket closes
         const ws = new WebSocket(`ws://${window.location.host}/rapid`);
         ws.onmessage = (ev => {
             const data: {
-                    pckg: string,
-                    route: string,
-                    body: any
-                } = JSON.parse(ev.data);
-        
+                pckg: string,
+                route: string,
+                body: any
+            } = JSON.parse(ev.data);
+
+            // Ignore messages that are not from rapid package
             if (data.pckg !== "rapid") return;
-        
-            switch (data.route) {
-            case "hotReload": {
-                const paths = [];
-                for (const path of data.body) {
-                    paths.push(new URL(path.route, window.location.origin).toString());
-                }
-                registry.invalidate(paths);
-            } break;
-            }
+
+            // Trigger router callbacks
+            router.match(data.route, data.body);
         });
     }
 }

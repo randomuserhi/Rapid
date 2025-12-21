@@ -189,7 +189,7 @@ async function serveResource(path: string, res: Http.ServerResponse) {
 }
 
 /** 
- * A single app instance that represents a package.
+ * A single app instance for a given package.
  * 
  * Manages its own standard library instance as well as requests.
  */
@@ -554,7 +554,7 @@ export class RapidRuntime {
      * @param body 
      */
     // TODO(randomuserhi): A more sophisticated web socket API
-    private broadcast(route: "hotReload", body: any) {
+    private broadcast(route: string, body: any) {
         for (const client of this.webSocketServer.clients) {
             if (client.readyState !== client.OPEN) continue;
             client.send(JSON.stringify({
