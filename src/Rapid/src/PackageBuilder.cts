@@ -349,9 +349,6 @@ async function generateInternalRepo(
 
         /** Package dependencies */
         additionalDependencies: PackageInfo[],
-
-        /** Merges this repo with another. You can specify which variants are shared (both repos must support the given variant) */
-        additionalIncludes: { name: "back" | "flex" | "front", variants?: string[] }[],
         
         /** What base libraries and types should the repo use */
         lib?: string[],
@@ -364,6 +361,9 @@ async function generateInternalRepo(
             module: string,
             moduleResolution?: string,
             types?: string[],
+            additionalIncludes: ("back" | "flex" | "front")[],
+            /** Merges this variant with another repo. You can specify which variants are shared (both must support the given variant) */
+            additionalReferences: { name: "back" | "flex" | "front", variants: string[] }[],
         }>
         
         createFolder: boolean,
@@ -375,7 +375,6 @@ async function generateInternalRepo(
         typeDir,
         createFolder,
         additionalDependencies,
-        additionalIncludes,
         lib,
         types,
         variants
@@ -404,27 +403,6 @@ async function generateInternalRepo(
         writeJobs.push(writeTsConfig(baseTsConfigPath, config));
     }
 
-    // add self to includes
-    const includes = [{ name, variants: Object.keys(variants) }, ...additionalIncludes];
-
-    // Build reference list
-    // Note, only from additional dependencies, although we implicitly
-    // depend on self to preven typescript circular reference.
-    const references: Ts.ProjectReference[] = [];
-    for (const dependency of additionalDependencies) {
-        for (const include of includes) {
-            const supportedVariants = include.variants ?? Object.keys(variants);
-            for (const variant of supportedVariants) {
-                references.push({ path: relPath(tsConfigDir, Path.join(dependency.TsconfigDir, include.name, `tsconfig${variant}.json`)) });
-            }
-        }
-    }
-
-    // Add additional includes to reference list
-    for (const include of additionalIncludes) {
-        references.push({ path: relPath(tsConfigDir, Path.join(pckg.TsconfigDir, include.name, `tsconfig${ASL_EXTENSION_TS}.json`)) });
-    }
-
     // add self to dependencies
     const dependencies = [pckg, ...additionalDependencies];
 
@@ -435,10 +413,31 @@ async function generateInternalRepo(
             rapidLib,
             module,
             moduleResolution,
+            additionalIncludes,
+            additionalReferences,
             types: variantTypes
         } = variants[variant];
 
-        const supportedIncludes = includes.filter(include => include.variants === undefined || include.variants.includes(variant));
+        // add self to includes
+        const includes = [name, ...additionalIncludes];
+
+        // Build reference list
+        const references: Ts.ProjectReference[] = [];
+        // Add self includes to reference list
+        for (const include of additionalReferences) {
+            for (const variant of include.variants) {
+                references.push({ path: relPath(tsConfigDir, Path.join(pckg.TsconfigDir, include.name, `tsconfig${variant}.json`)) });
+            }
+        }
+        // Add references from dependencies, unlike self, needs to include reference to main variant
+        for (const dependency of additionalDependencies) {
+            references.push({ path: relPath(tsConfigDir, Path.join(dependency.TsconfigDir, name, `tsconfig${variant}.json`)) });
+            for (const include of additionalReferences) {
+                for (const variant of include.variants) {
+                    references.push({ path: relPath(tsConfigDir, Path.join(dependency.TsconfigDir, include.name, `tsconfig${variant}.json`)) });
+                }
+            }
+        }
 
         // build paths
         const paths: Ts.MapLike<string[]> = {};
@@ -453,8 +452,8 @@ async function generateInternalRepo(
         for (const dependency of dependencies) {
             const dependentConfig = dependency.configSync();
 
-            for (const include of supportedIncludes) {
-                addTsPath(paths, `${dependency.name}/*`, relPath(tsConfigDir, Path.join(dependency.baseDir, include.name, "*")), browserStyleImports);
+            for (const include of includes) {
+                addTsPath(paths, `${dependency.name}/*`, relPath(tsConfigDir, Path.join(dependency.baseDir, include, "*")), browserStyleImports);
             }
 
             for (const name of pathOverrideNames) {
@@ -483,12 +482,16 @@ async function generateInternalRepo(
                 tsBuildInfoFile: relPath(tsConfigDir, Path.join(buildDir, `${variant}.tsbuildinfo`)),
                 paths
             },
-            include: [],
+            include: [
+                Path.join(relPath(tsConfigDir, Path.join(pckg.baseDir, name)), `**/*${variant}`)
+            ],
             references
         };
-        for (const include of supportedIncludes) {
+        for (const include of additionalReferences) {
             const includeDir = Path.join(pckg.baseDir, include.name);
-            config.include!.push(Path.join(relPath(tsConfigDir, includeDir), `**/*${variant}`));
+            for (const variant of include.variants) {
+                config.include!.push(Path.join(relPath(tsConfigDir, includeDir), `**/*${variant}`));
+            }
         }
         writeJobs.push(writeTsConfig(Path.join(tsConfigDir, `tsconfig${variant}.json`), config));
     }
@@ -604,9 +607,6 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
         generateInternalRepo(tsconfigBasePath, {
             name: "flex",
             pathOverrideNames: ["flex"],
-            // TODO(randomuserhi): Flex shouldn't allow DOM libraries such as document etc..., 
-            //                     but it needs stuff like AbortController and console.log
-            //                     need to find out how to properly handle this
             lib: ["ES2022"],
             types: [
                 Path.join(typeDir, "flex")
@@ -615,7 +615,6 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             typeDir,
             createFolder: config.flex !== undefined,
             additionalDependencies: dependencies,
-            additionalIncludes: [],
             variants: {
                 [ASL_EXTENSION_TS]: {
                     browserStyleImports: false,
@@ -623,7 +622,9 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                     module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
                     types: [
                         Path.join(typeDir, "asl"),
-                    ]
+                    ],
+                    additionalIncludes: [],
+                    additionalReferences: []
                 }
             }
         }),
@@ -638,7 +639,6 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             typeDir,
             createFolder: config.back !== undefined,
             additionalDependencies: dependencies,
-            additionalIncludes: [{ name: "flex", variants: [ ASL_EXTENSION_TS ] }],
             variants: {
                 [ASL_EXTENSION_TS]: {
                     browserStyleImports: false,
@@ -646,19 +646,28 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                     module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
                     types: [
                         Path.join(typeDir, "asl"),
+                    ],
+                    additionalIncludes: [ "flex" ],
+                    additionalReferences: [
+                        { name: "back", variants: [ ".cts", ".mts" ] },
+                        { name: "flex", variants: [ ASL_EXTENSION_TS ] }
                     ]
                 },
                 ".cts": {
                     browserStyleImports: false,
                     rapidLib: true,
                     module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
-                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext]
+                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext],
+                    additionalReferences: [],
+                    additionalIncludes: []
                 },
                 ".mts": {
                     browserStyleImports: false,
                     rapidLib: true,
                     module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
-                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext]
+                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext],
+                    additionalReferences: [],
+                    additionalIncludes: []
                 }
             }
         }),
@@ -669,7 +678,6 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             typeDir,
             createFolder: config.front !== undefined,
             additionalDependencies: dependencies,
-            additionalIncludes: [{ name: "flex", variants: [ ASL_EXTENSION_TS ] }],
             variants: {
                 [ASL_EXTENSION_TS]: {
                     browserStyleImports: false,
@@ -677,12 +685,19 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                     module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
                     types: [
                         Path.join(typeDir, "asl"),
+                    ],
+                    additionalIncludes: [ "flex" ],
+                    additionalReferences: [
+                        { name: "front", variants: [ ".mts" ] },
+                        { name: "flex", variants: [ ASL_EXTENSION_TS ] }
                     ]
                 },
                 ".mts": {
                     browserStyleImports: true,
                     rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022]
+                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                    additionalReferences: [],
+                    additionalIncludes: []
                 }
             }
         })
