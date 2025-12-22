@@ -24,6 +24,14 @@ declare module "rapid" {
         export const name: string;
 
         /**
+         * Serve a resource as a server response
+         * 
+         * @param path Path of resource to serve
+         * @param res http response object
+         */
+        export function serve(path: string, res: Http.ServerResponse): Promise<void>;
+
+        /**
          * Create a GET route for the current app.
          * 
          * @param url 
