@@ -985,6 +985,7 @@ export class ASLEnvironment {
             }
             return exports;
         }).then((exports) => {
+            // Wrap in module result
             return new ASLModuleResult(exports, otherRuntime);
         });
     }
