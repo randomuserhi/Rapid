@@ -252,15 +252,7 @@ export class ASLModuleRuntime {
     public readonly require: ASLImportFunc = undefined!;
 
     constructor(info: ASLModuleInfo) {
-        const url = new URL(info.path, ASL_BASE_URL);
-        if (url.origin === ASL_BASE_URL?.origin) {
-            // Convert path to short hand (pathname) if origin is shared,
-            this.path = url.pathname;
-        } else {
-            // Otherwise maintain full URL
-            this.path = url.toString();
-        }
-
+        this.path = info.path;
         this.mid = info.mid;
         this.exports = {};
     }
@@ -279,11 +271,11 @@ export class ASLModuleRuntime {
     /** 
      * Special callback used internally that resolves the execution promise created by `execModule`.
      */
-    private resolve: (result: ASLModuleObject) => void = undefined!;
+    private resolve: (result: ASLModuleResult) => void = undefined!;
 
     /** Mark module as ready */
     public ready() {
-        this.resolve(this.exports);
+        this.resolve(new ASLModuleResult(this.exports, this));
     }
 }
 
@@ -306,7 +298,7 @@ class ASLModule {
     /**
      * Executes the given module, returning the module object containing its exports.
      */
-    readonly exec: (aslImport: any, runtime: ASLModuleRuntime) => ASLRequest<ASLModuleObject> = undefined!;
+    readonly exec: (aslImport: any, runtime: ASLModuleRuntime) => ASLRequest<ASLModuleResult> = undefined!;
     
     constructor(mid: ASLModuleId, path: string) {
         this.info = {
@@ -571,7 +563,7 @@ class ASLRegistry {
      * 
      * @param moduleFunc The ASLModuleFunc of the module being executed.
      */
-    private execModule(moduleInfo: ASLModuleInfo, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc, runtime: ASLModuleRuntime): ASLRequest<ASLModuleObject> {
+    private execModule(moduleInfo: ASLModuleInfo, moduleFunc: ASLModuleFunc, envImport: ASLEnvImportFunc, runtime: ASLModuleRuntime): ASLRequest<ASLModuleResult> {
         return ASLRequest((resolve, reject) => {
             // Setup runtime
             runtime["resolve"] = resolve;
@@ -738,7 +730,7 @@ export const defaultErrorHook = (mid: ASLModuleId, error?: any) => {
 
 type ASLExecutionContext = Ref<ASLEnvironment>;
 
-interface ASLExecution extends ASLRequestWithContext<ASLModuleObject, ASLEnvironment> {
+interface ASLExecution extends ASLRequestWithContext<ASLModuleResult, ASLEnvironment> {
     mid: ASLModuleId;
     requesters: Set<ASLModuleId>;
 }
@@ -757,17 +749,39 @@ export type ASLErrorHook = (mid: ASLModuleId, error?: any) => void;
  */
 export type ASLRuntimeHook = (runtime: ASLModuleRuntime, exports: ASLModuleObject) => Promise<ASLModuleObject>;
 
+/** The result of a module execution */
+class ASLModuleResult {
+    /** The module exports */
+    readonly exports: ASLModuleObject;
+
+    /** The runtime of the module */
+    readonly runtime?: ASLModuleRuntime;
+
+    constructor(exports: ASLModuleObject, runtime?: ASLModuleRuntime) {
+        this.exports = exports;
+        this.runtime = runtime;
+    }
+}
+
 /**
  * ASL Environment.
  */
 export class ASLEnvironment {
     /** Module cache. Maps module to the cached module object. */
-    private readonly cache = new Map<ASLModuleId, ASLRequestResult<ASLModuleObject>>();
+    private readonly cache = new Map<ASLModuleId, ASLRequestResult<ASLModuleResult>>();
 
     /** Stores pending fetch requests for modules. */
     private readonly pending = new Map<ASLModuleId, ASLExecution>();
 
-    /** Stores the runtimes for each module */
+    /** 
+     * Stores the runtimes for each module.
+     * 
+     * Required despite the runtime being stored in `ASLModuleResult` of the cache, as
+     * when modules fail the cache value is a Failed result, so the runtime is not accessible.
+     * 
+     * This stores runtimes of all executed modules, from the moment the runtime is created, thus
+     * is available even when a module errors out.
+     */
     private readonly moduleRuntimes = new Map<ASLModuleId, ASLModuleRuntime>();
 
     /** 
@@ -886,7 +900,7 @@ export class ASLEnvironment {
      * @param options Import options
      * @returns Promise that resolves to the module's exports
      */
-    private import(contextRef: ASLExecutionContext, moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: string, options?: Partial<ASLImportOptions>): Promise<ASLModuleObject> {
+    private import(contextRef: ASLExecutionContext, moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: string, options?: Partial<ASLImportOptions>): Promise<ASLModuleResult> {
         // Create default options
         const parsedOptions: ASLImportOptions = {
             defaultImport: false,
@@ -897,11 +911,14 @@ export class ASLEnvironment {
         if (options !== undefined) {
             for (const key in options) {
                 const k = key as keyof ASLImportOptions;
-                if (options[k] !== undefined) {
-                    parsedOptions[k] = options[k];
+                if (Object.prototype.hasOwnProperty.call(options, k)) {
+                    parsedOptions[k] = options[k] as any;
                 }
             }
         }
+
+        /** Runtime of imported module, if imported module is not ASL, then this will be undefined */
+        let otherRuntime: ASLModuleRuntime | undefined = undefined;
 
         // Pass path through import hook
         return this.importHook(moduleInfo, path, parsedOptions).then(path => {
@@ -942,8 +959,9 @@ export class ASLEnvironment {
             
                 return env.fetch(mid, moduleInfo.mid).then((result) => {
                     if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
-            
-                    return result.item;
+
+                    otherRuntime = result.item.runtime;
+                    return result.item.exports;
                 });
             }
             case ".js":
@@ -966,6 +984,8 @@ export class ASLEnvironment {
                 return exports.default;
             }
             return exports;
+        }).then((exports) => {
+            return new ASLModuleResult(exports, otherRuntime);
         });
     }
 
@@ -992,7 +1012,7 @@ export class ASLEnvironment {
      * @param mid module id
      * @param requester the module making the request - used for debugging
      */
-    public fetch(mid: ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleObject>
+    public fetch(mid: ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleResult>
 
     /**
      * Loads a module into the environment
@@ -1000,9 +1020,9 @@ export class ASLEnvironment {
      * @param path File path to module
      * @param requester the module making the request - used for debugging
      */
-    public fetch(path: string, requester?: ASLModuleId): ASLRequest<ASLModuleObject>
+    public fetch(path: string, requester?: ASLModuleId): ASLRequest<ASLModuleResult>
 
-    public fetch(mid: string | ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleObject> {
+    public fetch(mid: string | ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleResult> {
         // Resolve mid from path
         if (typeof mid === "string") {
             mid = registry.getMid(mid);
@@ -1022,7 +1042,7 @@ export class ASLEnvironment {
                 requesters: new Set()
             };
 
-            _execution.request = ASLRequest<ASLModuleObject>((resolve, reject) => {
+            _execution.request = ASLRequest<ASLModuleResult>((resolve, reject) => {
                 _execution.cancel = this.cancelModuleExecution.bind(this, _execution, reject);
 
                 // Get reference to execution context

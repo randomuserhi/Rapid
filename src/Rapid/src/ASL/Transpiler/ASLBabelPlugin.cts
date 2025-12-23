@@ -45,7 +45,7 @@ export default function (babel: Babel): PluginObj {
                             const localName = specifier.local.name;
                             switch (specifier.type) {
                             case "ImportDefaultSpecifier": {
-                                defaultSpecifiers.push(`const ${localName} = await ${ASL_REQUIRE_KEYWORD}("${source}", { defaultImport: true })`);
+                                defaultSpecifiers.push(`const ${localName} = (await ${ASL_REQUIRE_KEYWORD}("${source}", { defaultImport: true })).exports`);
                             } break;
                             case "ImportSpecifier": {
                                 if (!t.isIdentifier(specifier.imported)) throw new Error(`Unsupported Identifier - TODO(support this...)`);
@@ -53,14 +53,14 @@ export default function (babel: Babel): PluginObj {
                                 importSpecifiers.push(importName === localName ? localName : `${importName}: ${localName}`);
                             } break;
                             case "ImportNamespaceSpecifier": {
-                                namespaceSpecifiers.push(`const ${localName} = await ${ASL_REQUIRE_KEYWORD}("${source}")`);
+                                namespaceSpecifiers.push(`const ${localName} = (await ${ASL_REQUIRE_KEYWORD}("${source}")).exports`);
                             } break;
                             }
                         }
 
                         const statements = [];
                         if (defaultSpecifiers.length > 0) statements.push(defaultSpecifiers.join(";\n"));
-                        if (importSpecifiers.length > 0) statements.push(`const { ${importSpecifiers.join(", ")} } = await ${ASL_REQUIRE_KEYWORD}("${source}")`);
+                        if (importSpecifiers.length > 0) statements.push(`const { ${importSpecifiers.join(", ")} } = (await ${ASL_REQUIRE_KEYWORD}("${source}")).exports`);
                         if (namespaceSpecifiers.length > 0) statements.push(namespaceSpecifiers.join(";\n"));
                         path.replaceWith(statement.ast`${statements.join(";\n")}`);
                     },
@@ -159,12 +159,12 @@ export default function (babel: Babel): PluginObj {
                                     case "ExportNamespaceSpecifier": {
                                         if (!source) throw new Error("ExportNamespaceSpecifier requires a source module");
 
-                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.${specifier.exported.name} = await ${ASL_REQUIRE_KEYWORD}("${source.value}");`;
+                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.${specifier.exported.name} = (await ${ASL_REQUIRE_KEYWORD}("${source.value}")).exports;`;
                                     }
                                     case "ExportDefaultSpecifier": {
                                         if (!source) throw new Error("ExportDefaultSpecifier requires a source module");
 
-                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.default = await ${ASL_REQUIRE_KEYWORD}("${source.value}", { defaultImport: true });`;
+                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.default = (await ${ASL_REQUIRE_KEYWORD}("${source.value}", { defaultImport: true })).exports;`;
                                     }
                                     }
                                 }));
@@ -216,7 +216,7 @@ export default function (babel: Babel): PluginObj {
                             createExportStarHelper();
                             
                             // export * from './module'
-                            path.replaceWithMultiple(statements.ast`${exportStarIdentifier!.name}(await ${ASL_REQUIRE_KEYWORD}("${source}"), ${ASL_EXPORTS_KEYWORD});`);
+                            path.replaceWithMultiple(statements.ast`${exportStarIdentifier!.name}((await ${ASL_REQUIRE_KEYWORD}("${source}")).exports, ${ASL_EXPORTS_KEYWORD});`);
                         } break;
                         }
                     }

@@ -10,11 +10,15 @@ class App {
     readonly name: string;
     readonly baseURL: string;
 
-    constructor(name: string) {
+    constructor(name: string, baseURL?: string) {
         if (name === "") throw new Error("App cannot have empty name.");
         
         this.name = name;
         this.baseURL = `${window.location.origin}/${this.name}/`;
+        if (baseURL !== undefined) {
+            if (!baseURL.endsWith("/")) baseURL += "/";
+            this.baseURL = new URL(baseURL, this.baseURL).toString();
+        }
     }
 }
 
@@ -39,6 +43,7 @@ setASLIsCaseSensitive(IS_CASE_SENSITIVE);
 
 interface RapidConfig {
     entry?: string;
+    baseURL?: string;
 }
 
 const rapid: RapidConfig = (window as any).rapid;
@@ -97,7 +102,7 @@ if (rapid !== undefined) {
     
         // Load entry point
         const entryPoint = ASLPath.fixASLExt(rapid.entry);
-        const app = new App(ASLPath.first(window.location.pathname));
+        const app = new App(ASLPath.first(window.location.pathname), rapid.baseURL);
         midToApp.set(registry.getMid(entryPoint), app);
         env.fetch(new URL(entryPoint, app.baseURL).toString());
 

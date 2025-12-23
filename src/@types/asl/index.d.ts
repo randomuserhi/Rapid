@@ -2,6 +2,15 @@ export { };
 
 type ASLModuleObject = Record<PropertyKey, any>;
 
+/** The result of a module execution */
+interface ASLModuleResult {
+    /** The module exports */
+    readonly exports: ASLModuleObject;
+
+    /** The runtime of the module */
+    readonly runtime?: ASLModuleRuntime;
+}
+
 interface ASLImportOptions {
     /** 
      * Is the type of import a default import? `import X from "X.js"` 
@@ -19,7 +28,7 @@ interface ASLImportOptions {
     updateDependencyGraph: boolean;
 }
 
-type ASLImportFunc = (path: string, options?: Partial<ASLImportOptions>) => Promise<ASLModuleObject>;
+type ASLImportFunc = (path: string, options?: Partial<ASLImportOptions>) => Promise<ASLModuleResult>;
 
 declare global {
     type ASLModuleId = number;
