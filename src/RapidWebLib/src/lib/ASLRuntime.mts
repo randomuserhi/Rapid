@@ -926,8 +926,8 @@ export class ASLEnvironment {
             }
         }
 
-        /** Runtime of imported module, if imported module is not ASL, then this will be undefined */
-        let otherRuntime: ASLModuleRuntime | undefined = undefined;
+        // Runtime of imported module, if imported module is not ASL, then this will be undefined
+        let importedRuntime: ASLModuleRuntime | undefined = undefined;
 
         // Pass path through import hook
         return this.importHook(moduleInfo, path, parsedOptions).then(path => {
@@ -958,7 +958,7 @@ export class ASLEnvironment {
                     return env.fetch(mid, runtime).then((result) => {
                         if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
 
-                        otherRuntime = result.item.runtime;
+                        importedRuntime = result.item.runtime;
                         return result.item.exports;
                     });
                 }
@@ -999,7 +999,7 @@ export class ASLEnvironment {
             return exports;
         }).then((exports) => {
             // Wrap in module result
-            return new ASLModuleResult(exports, otherRuntime);
+            return new ASLModuleResult(exports, importedRuntime);
         });
     }
 
