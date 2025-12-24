@@ -202,7 +202,7 @@ export type ASLModuleId = number;
 /**
  * Module object, represents exports for a module.
  */
-export type ASLModuleObject = Record<PropertyKey, any>;
+export type ASLModuleObject = any;
 
 /** Function that imports another module from an ASL module execution context. */
 type ASLEnvImportFunc = (moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: string, options?: Partial<ASLImportOptions>) => Promise<ASLModuleObject>;
@@ -730,7 +730,7 @@ class ASLArchetype {
 const RUNTIME_HOOK_NAME = "__linkASLRuntime";
 
 /** link hook function type. */
-export type __linkASLRuntime = (runtime: ASLModuleRuntime) => ASLModuleObject;
+export type __linkASLRuntime = (runtime: ASLModuleRuntime | undefined, exports: ASLModuleObject) => ASLModuleObject;
 
 /** By default, resolve relative paths based on importing module */
 export const defaultImportHook = async (module: ASLModuleInfo, path: string) => {
@@ -919,67 +919,71 @@ export class ASLEnvironment {
         let otherRuntime: ASLModuleRuntime | undefined = undefined;
 
         // Pass path through import hook
-        return this.importHook(moduleInfo, path, parsedOptions).then(path => {
-            // If import hook returned an object directly, use that instead
-            if (typeof path !== "string") {
-                // Manage default property to handle default imports
-                return new Promise((resolve) => resolve(path));
-            }
+        return this.importHook(moduleInfo, path, parsedOptions).then(async path => {
+            let exports: ASLModuleObject; 
 
-            // Resolve type of import
-            const importType = extname(path);
+            if (typeof path === "string") {
+                // Resolve type of import
+                const importType = extname(path);
 
-            switch (importType) {
-            case ".node": {
-                // Node import
+                switch (importType) {
+                case ASL_EXTENSION:
+                case ASL_EXTENSION_JS: {
+                    // ASL import
 
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                return new Promise((resolve) => resolve(require(path)));
-            }
-            case ".js":
-            case ".mjs": {
-                // ESM import
+                    const mid = registry.getMid(path);
 
-                return import(path);
-            }
-            case ASL_EXTENSION:
-            case ASL_EXTENSION_JS: {
-                // ASL import
+                    if (mid === moduleInfo.mid) throw new ASLImportError("Cannot import self.");
 
-                const mid = registry.getMid(path);
+                    const env = contextRef.deref();
 
-                if (mid === moduleInfo.mid) throw new ASLImportError("Cannot import self.");
+                    if (parsedOptions.updateDependencyGraph) {
+                        // Update modules archetype as approapriate
+                        const arch = env.moduleArchetype.get(moduleInfo.mid)!;
+                        env.moduleArchetype.set(moduleInfo.mid, env.traverse(arch, mid));
+                    }
 
-                const env = contextRef.deref();
+                    // Can return directly as ASL handles linking runtime automatically
+                    return env.fetch(mid, runtime).then((result) => {
+                        if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
+                        
+                        otherRuntime = result.item.runtime;
+                        return result.item.exports;
+                    });
+                }
+                case ".node": {
+                    // Node import
 
-                if (parsedOptions.updateDependencyGraph) {
-                    // Update modules archetype as approapriate
-                    const arch = env.moduleArchetype.get(moduleInfo.mid)!;
-                    env.moduleArchetype.set(moduleInfo.mid, env.traverse(arch, mid));
+                    // eslint-disable-next-line @typescript-eslint/no-require-imports
+                    exports = require(path);
+                } break;
+                case ".js":
+                case ".mjs": {
+                    // ESM import
+
+                    exports = await import(path);
+                } break;
+                case ".cjs": {
+                    // Node import
+
+                    // eslint-disable-next-line @typescript-eslint/no-require-imports
+                    exports = require(path);
+                } break;
                 }
 
-                return env.fetch(mid, moduleInfo.mid).then((result) => {
-                    if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
-                    
-                    otherRuntime = result.item.runtime;
-                    return result.item.exports;
-                });
-            }
-            case ".cjs": {
-                // Node import
-
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                return new Promise((resolve) => resolve(require(path)));
-            }
+                throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
             }
 
-            throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
+            // If import hook returned an object directly, use that instead
+            if (typeof path !== "string") {
+                exports = path;
+            }
+
+            // Handle linking runtime for non-ASL modules - imported runtime is undefined
+            return this.linkExports(runtime, exports, undefined);
         }).then((exports) => {
-            // link exports to this module's runtime if supported
-            return this.linkExports(runtime, exports, otherRuntime);
-        }).then((exports) => {
-            // Handle default imports
-            if (parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {
+            // Handle default imports - supports interop for es modules etc...
+            if (exports !== undefined && parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {
                 return exports.default;
             }
             return exports;
@@ -1005,8 +1009,8 @@ export class ASLEnvironment {
      * @param imported The runtime of the importee (if its an ASLModule)
      * @returns linked exports
      */
-    private async linkExports(importer: ASLModuleRuntime, exports: ASLModuleObject, imported: ASLModuleRuntime | undefined) {
-        if (Object.prototype.hasOwnProperty.call(exports, RUNTIME_HOOK_NAME)) {
+    private async linkExports(importer: ASLModuleRuntime | undefined, exports: ASLModuleObject, imported: ASLModuleRuntime | undefined) {
+        if (exports !== undefined && Object.prototype.hasOwnProperty.call(exports, RUNTIME_HOOK_NAME)) {
             // We use the exports as the key to support non-ASL modules with link hooks
             let cache = this.linkedExportsCache.get(exports);
             if (cache === undefined) {
@@ -1017,18 +1021,20 @@ export class ASLEnvironment {
                 imported?.onAbort(() => this.linkedExportsCache.delete(exports));
             }
 
-            let linkedExports = cache.get(importer);
-            if (linkedExports === undefined) {
-                linkedExports = await exports[RUNTIME_HOOK_NAME](importer);
-                if (linkedExports === undefined) throw new Error("Exports cannot be undefined after linking.");
+            if (importer !== undefined) {
+                let linkedExports = cache.get(importer);
+                if (linkedExports === undefined) {
+                    linkedExports = await exports[RUNTIME_HOOK_NAME](importer);
+                    cache.set(importer, linkedExports);
 
-                cache.set(importer, linkedExports);
+                    // Clear out cache on module unload (if its an ASLModule)
+                    importer.onAbort(() => cache.delete(importer));
+                }
 
-                // Clear out cache on module unload (if its an ASLModule)
-                importer.onAbort(() => cache.delete(importer));
+                return linkedExports;
             }
 
-            return linkedExports;
+            return await exports[RUNTIME_HOOK_NAME](importer);
         }
         return exports;
     }
@@ -1056,7 +1062,7 @@ export class ASLEnvironment {
      * @param mid module id
      * @param requester the module making the request - used for debugging
      */
-    public fetch(mid: ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleResult>
+    public fetch(mid: ASLModuleId, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult>
 
     /**
      * Loads a module into the environment
@@ -1064,9 +1070,9 @@ export class ASLEnvironment {
      * @param path File path to module
      * @param requester the module making the request - used for debugging
      */
-    public fetch(path: string, requester?: ASLModuleId): ASLRequest<ASLModuleResult>
+    public fetch(path: string, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult>
 
-    public fetch(mid: string | ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleResult> {
+    public fetch(mid: string | ASLModuleId, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult> {
         // Resolve mid from path
         if (typeof mid === "string") {
             mid = registry.getMid(mid);
@@ -1131,6 +1137,12 @@ export class ASLEnvironment {
                         else reject(result.error);
                     }).catch(reject);
                 }
+            }).then((result) => {
+                if (result.ok()) {
+                    // Perform link module loaded succesfully
+                    result.item = new ASLModuleResult(this.linkExports(requester, result.item.exports, result.item.runtime), result.item.runtime);
+                } 
+                return result;
             });
 
             // Add to map of pending requests
@@ -1157,7 +1169,7 @@ export class ASLEnvironment {
         }
 
         // Keep track of the requester
-        if (requester !== undefined) execution.requesters.add(requester);
+        if (requester !== undefined) execution.requesters.add(requester.mid);
 
         return execution.request;
     }
