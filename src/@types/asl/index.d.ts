@@ -84,7 +84,7 @@ declare global {
      * @param runtime The runtime of the ASL module performing the import of the current module. Undefined if imported from a non-ASL context.
      * @param exports The immutable exports of the current module.
      */
-    type __linkASLRuntime = (runtime: ASLModuleRuntime | undefined, exports: ASLModuleObject) => ASLModuleObject | Promise<ASLModuleObject>;
+    type __linkASLRuntime = (runtime: ASLModuleRuntime, exports: ASLModuleObject) => ASLModuleObject | Promise<ASLModuleObject>;
 
     const __ASL: ASLModuleRuntime;
 

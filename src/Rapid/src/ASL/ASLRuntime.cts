@@ -730,7 +730,7 @@ class ASLArchetype {
 const RUNTIME_HOOK_NAME = "__linkASLRuntime";
 
 /** link hook function type. */
-export type __linkASLRuntime = (runtime: ASLModuleRuntime | undefined, exports: ASLModuleObject) => ASLModuleObject;
+export type __linkASLRuntime = (runtime: ASLModuleRuntime, exports: ASLModuleObject) => ASLModuleObject;
 
 /** By default, resolve relative paths based on importing module */
 export const defaultImportHook = async (module: ASLModuleInfo, path: string) => {
@@ -938,9 +938,7 @@ export class ASLEnvironment {
                     const env = contextRef.deref();
 
                     if (parsedOptions.updateDependencyGraph) {
-                        // Update modules archetype as approapriate
-                        const arch = env.moduleArchetype.get(moduleInfo.mid)!;
-                        env.moduleArchetype.set(moduleInfo.mid, env.traverse(arch, mid));
+                        env.updateDependencyGraph(moduleInfo.mid, mid);
                     }
 
                     // Can return directly as ASL handles linking runtime automatically
@@ -993,6 +991,18 @@ export class ASLEnvironment {
         });
     }
 
+    /**
+     * Updates the dependency graph of the provided module.
+     * 
+     * @param module Module to update dependencies of
+     * @param dependency Dependency to add to module
+     */
+    public updateDependencyGraph(module: ASLModuleId, dependency: ASLModuleId) {
+        // Update modules archetype as approapriate
+        const arch = this.moduleArchetype.get(module)!;
+        this.moduleArchetype.set(module, this.traverse(arch, dependency));
+    }
+
     /** 
      * For each module export object (ASL or non ASL), store a cache of their linked export variant.
      * The linked export is a version of the original export object, but linked to its ASL importer's runtime.
@@ -1011,6 +1021,9 @@ export class ASLEnvironment {
      */
     private async linkExports(importer: ASLModuleRuntime | undefined, exports: ASLModuleObject, imported: ASLModuleRuntime | undefined) {
         if (exports !== undefined && Object.prototype.hasOwnProperty.call(exports, RUNTIME_HOOK_NAME)) {
+            // TODO(randomuserhi): Better error message
+            if (importer === undefined) throw new Error("Cannot link module without an ASL context.");
+
             // We use the exports as the key to support non-ASL modules with link hooks
             let cache = this.linkedExportsCache.get(exports);
             if (cache === undefined) {
@@ -1021,20 +1034,16 @@ export class ASLEnvironment {
                 imported?.onAbort(() => this.linkedExportsCache.delete(exports));
             }
 
-            if (importer !== undefined) {
-                let linkedExports = cache.get(importer);
-                if (linkedExports === undefined) {
-                    linkedExports = await exports[RUNTIME_HOOK_NAME](importer);
-                    cache.set(importer, linkedExports);
+            let linkedExports = cache.get(importer);
+            if (linkedExports === undefined) {
+                linkedExports = await exports[RUNTIME_HOOK_NAME](importer);
+                cache.set(importer, linkedExports);
 
-                    // Clear out cache on module unload (if its an ASLModule)
-                    importer.onAbort(() => cache.delete(importer));
-                }
-
-                return linkedExports;
+                // Clear out cache on module unload (if its an ASLModule)
+                importer.onAbort(() => cache.delete(importer));
             }
 
-            return await exports[RUNTIME_HOOK_NAME](importer);
+            return linkedExports;
         }
         return exports;
     }
@@ -1057,7 +1066,10 @@ export class ASLEnvironment {
     }
 
     /**
-     * Loads a module into the environment
+     * Loads a module into the environment.
+     * 
+     * Note does not update the modules dependency graph, even if a requester is provided.
+     * Use `UpdateDependencyGraph` to update the modules dependencies.
      * 
      * @param mid module id
      * @param requester the module making the request - used for debugging
@@ -1065,7 +1077,10 @@ export class ASLEnvironment {
     public fetch(mid: ASLModuleId, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult>
 
     /**
-     * Loads a module into the environment
+     * Loads a module into the environment.
+     * 
+     * Note does not update the modules dependency graph, even if a requester is provided.
+     * Use `UpdateDependencyGraph` to update the modules dependencies.
      * 
      * @param path File path to module
      * @param requester the module making the request - used for debugging
@@ -1139,7 +1154,7 @@ export class ASLEnvironment {
                 }
             }).then((result) => {
                 if (result.ok()) {
-                    // Perform link module loaded succesfully
+                    // Execute link hook
                     result.item = new ASLModuleResult(this.linkExports(requester, result.item.exports, result.item.runtime), result.item.runtime);
                 } 
                 return result;
