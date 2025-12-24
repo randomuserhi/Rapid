@@ -1184,10 +1184,9 @@ export class ASLEnvironment {
 
         // collect module destructors and delete module runtime
         const runtime = this.moduleRuntimes.get(mid);
-        if (runtime !== undefined) {
-            abortControllers.add(runtime["abort"]);
-            this.moduleRuntimes.delete(mid);
-        }
+        if (runtime === undefined) throw new Error(`Unable to find runtime for module: ${mid} being unloaded.`);
+        abortControllers.add(runtime["abort"]);
+        this.moduleRuntimes.delete(mid);
 
         // Unload modules that depend on this one
         const archetypesContainingModule = this.typemap.get(mid);
