@@ -534,29 +534,31 @@ class ASLRegistry {
                     resolve(this.cache.get(mid)!);
                 } else {
                     // If its not in cache or pending, make a request to fetch it
-                    fetch(path, { method: "GET" }).then((req) => req.text())
-                        .then(code => {
-                            // Get request context
-                            const context = _fetchRequest.contextRef.deref();
+                    fetch(path, { method: "GET" }).then((req) => {
+                        if (req.ok) {
+                            return req.text();
+                        } else throw new Error(`Unable to fetch ASL module: ${req.statusText} (${req.status})`);
+                    }).then(code => {
+                        // Get request context
+                        const context = _fetchRequest.contextRef.deref();
 
-                            // Create module function.
-                            // This runs in an async function as ASL needs to support the `await` keyword at the top-level.
-                            // The function has the parameters `require`, `module` and `exports` to provide the necessary keywords.
-                            //
-                            // Note that `require` refers to `aslImport`, in ASL scripts the keyword is `require` for simplicity.
-                            const moduleFunc = (new Function(`return (async (__ASL_require, __ASL, __ASL_exports) => {${code}\n});\n//# sourceMappingURL=${path}.map`))() as ASLModuleFunc;
+                        // Create module function.
+                        // This runs in an async function as ASL needs to support the `await` keyword at the top-level.
+                        // The function has the parameters `require`, `module` and `exports` to provide the necessary keywords.
+                        //
+                        // Note that `require` refers to `aslImport`, in ASL scripts the keyword is `require` for simplicity.
+                        const moduleFunc = (new Function(`return (async (__ASL_require, __ASL, __ASL_exports) => {${code}\n});\n//# sourceMappingURL=${path}.map`))() as ASLModuleFunc;
 
-                            // Create module info
-                            const aslModule = new ASLModule(mid, path);
-                            (aslModule as any).exec = context.execModule.bind(context, aslModule.info, moduleFunc);
+                        // Create module info
+                        const aslModule = new ASLModule(mid, path);
+                        (aslModule as any).exec = context.execModule.bind(context, aslModule.info, moduleFunc);
 
-                            // Add to cache
-                            context.cache.set(mid, aslModule);
+                        // Add to cache
+                        context.cache.set(mid, aslModule);
 
-                            // Resolve request
-                            resolve(aslModule);
-                        })
-                        .catch(reject);
+                        // Resolve request
+                        resolve(aslModule);
+                    }).catch(reject);
                 }
             });
 
