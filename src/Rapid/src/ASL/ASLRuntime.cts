@@ -968,8 +968,11 @@ export class ASLEnvironment {
         });
     }
 
-    /** Cache used for linked exports */
-    private readonly runtimeCache = new Map<any, Map<ASLModuleRuntime, ASLModuleObject>>();
+    /** 
+     * For each module export object (ASL or non ASL), store a cache of their linked export variant.
+     * The linked export is a version of the original export object, but linked to its ASL importer's runtime.
+     */
+    private readonly linkedExportsCache = new Map<any, Map<ASLModuleRuntime, ASLModuleObject>>();
 
     /**
      * Links an imported module to the caller
@@ -984,13 +987,13 @@ export class ASLEnvironment {
     private async linkExports(importer: ASLModuleRuntime, exports: ASLModuleObject, imported: ASLModuleRuntime | undefined) {
         if (Object.prototype.hasOwnProperty.call(exports, RUNTIME_HOOK_NAME)) {
             // We use the exports as the key to support non-ASL modules with link hooks
-            let cache = this.runtimeCache.get(exports);
+            let cache = this.linkedExportsCache.get(exports);
             if (cache === undefined) {
                 cache = new Map();
-                this.runtimeCache.set(exports, cache);
+                this.linkedExportsCache.set(exports, cache);
 
                 // Clear out cache on module unload (if its an ASLModule)
-                imported?.onAbort(() => this.runtimeCache.delete(exports));
+                imported?.onAbort(() => this.linkedExportsCache.delete(exports));
             }
 
             let linkedExports = cache.get(importer);
