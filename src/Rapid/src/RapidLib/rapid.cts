@@ -1,4 +1,4 @@
-import type { RapidApp } from "../RapidRuntime.cjs";
+import { RapidApp } from "../RapidRuntime.cjs";
 
 export type { RapidApp } from "../RapidRuntime.cjs";
 
@@ -65,30 +65,28 @@ function remove(this: RapidApp, method: RestMethod, cb: (match: PatternMatch, re
     return router.remove(cb);
 }
 
-// Cache bound functions after linking to app (used by ASLRuntime linker)
-const __linkCache = {
-    name: undefined! as string,
-    remove
-};
-
 // ASL import hook for module runtime 
-function __linkASLRuntime(this: RapidApp, runtime: ASLModuleRuntime) {
+function __linkASLRuntime(this: RapidApp, appExports: any, runtime: ASLModuleRuntime, exports: any) {
     return {
+        ...exports,
         app: {
             serve,
             route: route.bind(this, runtime),
-            ...__linkCache
+            ...appExports
         }
     };
 }
 
 // Rapid App hook
 export function __linkRapidApp(app: RapidApp, exports: any) {
-    __linkCache.remove = remove.bind(app);
-    __linkCache.name = app.pckgInfo.name;
+    // Exports specific to the app
+    const appExports = {
+        name: app.pckgInfo.name,
+        remove: remove.bind(app)
+    };
 
     return {
         ...exports,
-        __linkASLRuntime: __linkASLRuntime.bind(app)
+        __linkASLRuntime: __linkASLRuntime.bind(app, appExports)
     };
 }

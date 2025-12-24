@@ -708,13 +708,7 @@ class ASLArchetype {
 // Default runtime hook function name
 const RUNTIME_HOOK_NAME = "__linkASLRuntime";
 
-/** By default call hook function. */
-export const defaultRuntimeHook = async (runtime: ASLModuleRuntime, object: ASLModuleObject) => {
-    if (Object.prototype.hasOwnProperty.call(object, RUNTIME_HOOK_NAME)) {
-        return object[RUNTIME_HOOK_NAME](runtime);
-    }
-    return object;
-};
+/** link hook function type. */
 export type __linkASLRuntime = (runtime: ASLModuleRuntime) => ASLModuleObject;
 
 /** By default, resolve relative paths based on importing module */
@@ -739,14 +733,6 @@ export type ASLImportHook = (module: ASLModuleInfo, path: string, options?: ASLI
 
 /** Function called on error */
 export type ASLErrorHook = (mid: ASLModuleId, error?: any) => void;
-
-/** 
- * Function called when an import has finished running 
- *
- * @param runtime The runtime of the module performing the import on the current module
- * @param exports The exports of the current module
- */
-export type ASLRuntimeHook = (runtime: ASLModuleRuntime, exports: ASLModuleObject) => Promise<ASLModuleObject>;
 
 /** The result of a module execution */
 class ASLModuleResult {
@@ -810,12 +796,6 @@ export class ASLEnvironment {
      * Import hook that the user can define to transform paths before they are used
      */
     public importHook: ASLImportHook = defaultImportHook;
-
-    /**
-     * Runtime hook that the user can define to modify module exports on each module import.
-     * This is used to provide the imported module with information about who imported it.
-     */
-    public runtimeHook: ASLRuntimeHook = defaultRuntimeHook;
 
     /**
      * Error hook that the user can define to handle module errors
@@ -974,11 +954,9 @@ export class ASLEnvironment {
 
             throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
         }).then((exports) => {
-            // Pass through runtime hook
-            return this.runtimeHook(runtime, exports);
+            // link exports to this module's runtime if supported
+            return this.linkExports(runtime, exports, otherRuntime);
         }).then((exports) => {
-            if (exports === undefined) throw new Error("ASL `exports` object was undefined.");
-
             // Handle default imports
             if (parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {
                 return exports.default;
@@ -988,6 +966,47 @@ export class ASLEnvironment {
             // Wrap in module result
             return new ASLModuleResult(exports, otherRuntime);
         });
+    }
+
+    /** Cache used for linked exports */
+    private readonly runtimeCache = new Map<any, Map<ASLModuleRuntime, ASLModuleObject>>();
+
+    /**
+     * Links an imported module to the caller
+     * 
+     * TODO(randomuserhi): Better documentation on this
+     * 
+     * @param importer The runtime performing the import
+     * @param exports The exports of the importee
+     * @param imported The runtime of the importee (if its an ASLModule)
+     * @returns linked exports
+     */
+    private async linkExports(importer: ASLModuleRuntime, exports: ASLModuleObject, imported: ASLModuleRuntime | undefined) {
+        if (Object.prototype.hasOwnProperty.call(exports, RUNTIME_HOOK_NAME)) {
+            // We use the exports as the key to support non-ASL modules with link hooks
+            let cache = this.runtimeCache.get(exports);
+            if (cache === undefined) {
+                cache = new Map();
+                this.runtimeCache.set(exports, cache);
+
+                // Clear out cache on module unload (if its an ASLModule)
+                imported?.onAbort(() => this.runtimeCache.delete(exports));
+            }
+
+            let linkedExports = cache.get(importer);
+            if (linkedExports === undefined) {
+                linkedExports = await exports[RUNTIME_HOOK_NAME](importer);
+                if (linkedExports === undefined) throw new Error("Exports cannot be undefined after linking.");
+
+                cache.set(importer, linkedExports);
+
+                // Clear out cache on module unload (if its an ASLModule)
+                importer.onAbort(() => cache.delete(importer));
+            }
+
+            return linkedExports;
+        }
+        return exports;
     }
 
     /**
