@@ -1065,10 +1065,13 @@ export class ASLEnvironment {
     }
 
     /**
-     * Loads a module into the environment.
+     * Loads a module into the environment
      * 
      * Note does not update the modules dependency graph, even if a requester is provided.
-     * Use `UpdateDependencyGraph` to update the modules dependencies.
+     * Use `updateDependencyGraph` to update the modules dependencies.
+     * 
+     * Also does not perform the post-processing step to obtain linked exports.
+     * Use `getLinkedExports` to obtain them manually.
      * 
      * @param mid module id
      * @param requester the module making the request - used for debugging
@@ -1076,10 +1079,13 @@ export class ASLEnvironment {
     public fetch(mid: ASLModuleId, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult>
 
     /**
-     * Loads a module into the environment.
+     * Loads a module into the environment
      * 
      * Note does not update the modules dependency graph, even if a requester is provided.
-     * Use `UpdateDependencyGraph` to update the modules dependencies.
+     * Use `updateDependencyGraph` to update the modules dependencies.
+     * 
+     * Also does not perform the post-processing step to obtain linked exports.
+     * Use `getLinkedExports` to obtain them manually.
      * 
      * @param path File path to module
      * @param requester the module making the request - used for debugging
