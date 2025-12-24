@@ -931,64 +931,58 @@ export class ASLEnvironment {
 
         // Pass path through import hook
         return this.importHook(moduleInfo, path, parsedOptions).then(path => {
-            let exports: ASLModuleObject; 
-
-            if (typeof path === "string") {
-                // Resolve type of import
-                const importType = extname(path);
-
-                switch (importType) {
-                case ASL_EXTENSION:
-                case ASL_EXTENSION_JS: {
-                    // ASL import
-                
-                    const mid = registry.getMid(path);
-                
-                    if (mid === moduleInfo.mid) throw new ASLImportError("Cannot import self.");
-                
-                    const env = contextRef.deref();
-                
-                    if (parsedOptions.updateDependencyGraph) {
-                        env.updateDependencyGraph(moduleInfo.mid, mid);
-                    }
-                
-                    // Can return directly as ASL handles linking runtime automatically
-                    return env.fetch(mid, runtime).then((result) => {
-                        if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
-
-                        importedRuntime = result.item.runtime;
-                        return result.item.exports;
-                    });
-                }
-                case ".node": {
-                    // Node import
-                            
-                    throw new ASLImportError(`Web based ASL does not support '.node' (native addons) style imports.`);
-                }
-                case ".cjs": {
-                    // Node import
-                            
-                    throw new ASLImportError(`Web based ASL does not support '.cjs' style imports.`);
-                }
-                
-                case ".js":
-                case ".mjs": {
-                    // ESM import
-                
-                    exports = import(path);
-                } break;
-                }
-                
-                throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
-            }
-
             // If import hook returned an object directly, use that instead
-            if (typeof path !== "string") {
-                exports = path;
-            }
+            if (typeof path !== "string") return path;
 
-            // Handle linking runtime for non-ASL modules - imported runtime is undefined
-            return this.linkExports(runtime, exports, undefined);
+            // Resolve type of import
+            const importType = extname(path);
+
+            switch (importType) {
+            case ASL_EXTENSION:
+            case ASL_EXTENSION_JS: {
+                // ASL import
+            
+                const mid = registry.getMid(path);
+            
+                if (mid === moduleInfo.mid) throw new ASLImportError("Cannot import self.");
+            
+                const env = contextRef.deref();
+            
+                if (parsedOptions.updateDependencyGraph) {
+                    env.updateDependencyGraph(moduleInfo.mid, mid);
+                }
+            
+                // Can return directly as ASL handles linking runtime automatically
+                return env.fetch(mid, runtime.mid).then((result) => {
+                    if (!result.ok()) throw new ASLImportError(`Requested module threw an error.`);
+
+                    importedRuntime = result.item.runtime;
+                    return result.item.exports;
+                });
+            }
+            case ".node": {
+                // Node import
+                        
+                throw new ASLImportError(`Web based ASL does not support '.node' (native addons) style imports.`);
+            }
+            case ".cjs": {
+                // Node import
+                        
+                throw new ASLImportError(`Web based ASL does not support '.cjs' style imports.`);
+            }
+            
+            case ".js":
+            case ".mjs": {
+                // ESM import
+            
+                return import(path);
+            }
+            }
+            
+            throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
+        }).then((exports) => {
+            // Perform post-processing step on exports
+            return this.getLinkedExports(runtime, exports, importedRuntime);
         }).then((exports) => {
             // Handle default imports - supports interop for es modules etc...
             if (exports !== undefined && parsedOptions.defaultImport && Object.prototype.hasOwnProperty.call(exports, "default")) {
@@ -1020,16 +1014,21 @@ export class ASLEnvironment {
     private readonly linkedExportsCache = new Map<any, Map<ASLModuleRuntime, ASLModuleObject>>();
 
     /**
-     * Links an imported module to the caller
+     * A post-processing step that can be performed on any module exports that implements it.
+     *
+     * Allows exports to link with an ASL module runtime (typically the runtime importing it) 
+     * to produce a different set of exports specific to said runtime.
      * 
-     * TODO(randomuserhi): Better documentation on this
+     * ASL require calls automatically perform this step (unlike `ASLEnvironment.fetch`) which allows
+     * modules implementing this to be aware of the importer, providing access to the importer's runtime.
+     * It may then return different exports depending on the importer.
      * 
      * @param importer The runtime performing the import
      * @param exports The exports of the importee
-     * @param imported The runtime of the importee (if its an ASLModule)
+     * @param imported The runtime of the importee (if the exports originate from an ASLModule)
      * @returns linked exports
      */
-    private async linkExports(importer: ASLModuleRuntime | undefined, exports: ASLModuleObject, imported: ASLModuleRuntime | undefined) {
+    public async getLinkedExports(importer: ASLModuleRuntime | undefined, exports: ASLModuleObject, imported: ASLModuleRuntime | undefined) {
         if (exports !== undefined && Object.prototype.hasOwnProperty.call(exports, RUNTIME_HOOK_NAME)) {
             // TODO(randomuserhi): Better error message
             if (importer === undefined) throw new Error("Cannot link module without an ASL context.");
@@ -1078,20 +1077,32 @@ export class ASLEnvironment {
     /**
      * Loads a module into the environment
      * 
+     * Note does not update the modules dependency graph, even if a requester is provided.
+     * Use `updateDependencyGraph` to update the modules dependencies.
+     * 
+     * Also does not perform the post-processing step to obtain linked exports.
+     * Use `getLinkedExports` to obtain them manually.
+     * 
      * @param mid module id
      * @param requester the module making the request - used for debugging
      */
-    public fetch(mid: ASLModuleId, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult>
+    public fetch(mid: ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleResult>
 
     /**
      * Loads a module into the environment
      * 
+     * Note does not update the modules dependency graph, even if a requester is provided.
+     * Use `updateDependencyGraph` to update the modules dependencies.
+     * 
+     * Also does not perform the post-processing step to obtain linked exports.
+     * Use `getLinkedExports` to obtain them manually.
+     * 
      * @param path File path to module
      * @param requester the module making the request - used for debugging
      */
-    public fetch(path: string, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult>
+    public fetch(path: string, requester?: ASLModuleId): ASLRequest<ASLModuleResult>
 
-    public fetch(mid: string | ASLModuleId, requester?: ASLModuleRuntime): ASLRequest<ASLModuleResult> {
+    public fetch(mid: string | ASLModuleId, requester?: ASLModuleId): ASLRequest<ASLModuleResult> {
         // Resolve mid from path
         if (typeof mid === "string") {
             mid = registry.getMid(mid);
@@ -1156,13 +1167,7 @@ export class ASLEnvironment {
                         else reject(result.error);
                     }).catch(reject);
                 }
-            }).then((result) => {
-                if (result.ok()) {
-                    // Execute link hook
-                    result.item = new ASLModuleResult(this.linkExports(requester, result.item.exports, result.item.runtime), result.item.runtime);
-                } 
-                return result;
-            });;
+            });
 
             // Add to map of pending requests
             execution = _execution;
@@ -1188,7 +1193,7 @@ export class ASLEnvironment {
         }
 
         // Keep track of the requester
-        if (requester !== undefined) execution.requesters.add(requester.mid);
+        if (requester !== undefined) execution.requesters.add(requester);
 
         return execution.request;
     }
