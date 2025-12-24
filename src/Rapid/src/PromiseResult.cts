@@ -1,3 +1,4 @@
+
 /**
  * A result for a given request.
  * Can be checked if the result is available or if it errored.
@@ -24,8 +25,15 @@ export class Result<T, ErrorType = any> {
 /**
  * Static resolve handler for `Request`s.
  */
-function PromiseResultResolve<T, ErrorType = any>(resolve: (value: Result<T, ErrorType> | PromiseLike<Result<T, ErrorType>>) => void, result: T) {
-    resolve(new Result<T, ErrorType>(result));
+function PromiseResultResolve<T, ErrorType = any>(resolve: (value: Result<T, ErrorType> | PromiseLike<Result<T, ErrorType>>) => void) {
+    return (result: T | PromiseLike<T>) => {
+        if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<T>).then === "function") {
+            // If result is PromiseLike, we have to .then it
+            (result as PromiseLike<T>).then((result) => resolve(new Result<T, ErrorType>(result)));
+        } else {
+            resolve(new Result<T, ErrorType>(result as T));
+        }
+    };
 }
 
 /**
@@ -34,7 +42,7 @@ function PromiseResultResolve<T, ErrorType = any>(resolve: (value: Result<T, Err
  */
 export function PromiseResult<T, ErrorType = any>(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: ErrorType) => void) => void): Promise<Result<T, ErrorType>> {
     return new Promise<Result<T, ErrorType>>((resolve, reject) => {
-        executor((PromiseResultResolve as any).bind(undefined, resolve), reject);
+        executor(PromiseResultResolve(resolve), reject);
     }).catch(reason => new Result<T, ErrorType>(undefined, reason));
 }
 

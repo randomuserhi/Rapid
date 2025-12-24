@@ -1,5 +1,7 @@
+import { bind } from "../ArrowBind.cjs";
 import { RapidApp } from "../RapidRuntime.cjs";
 
+export { bind } from "../ArrowBind.cjs";
 export type { RapidApp } from "../RapidRuntime.cjs";
 
 import FileSync from "fs";
@@ -40,11 +42,11 @@ async function serve(path: string, res: Http.ServerResponse) {
     await pipeline(stream, res);
 }
 
-function route(this: RapidApp, runtime: ASLModuleRuntime, method: RestMethod, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
-    let router = this.httpRoutes.get(method);
+function route(app: RapidApp, runtime: ASLModuleRuntime, method: RestMethod, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
+    let router = app.httpRoutes.get(method);
     if (router === undefined) {
         router = new Router();
-        this.httpRoutes.set(method, router);
+        app.httpRoutes.set(method, router);
     }
     
     router.add(path, cb);
@@ -55,23 +57,23 @@ function route(this: RapidApp, runtime: ASLModuleRuntime, method: RestMethod, pa
     return cb;
 }
 
-function remove(this: RapidApp, method: RestMethod, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
-    let router = this.httpRoutes.get(method);
+function remove(app: RapidApp, method: RestMethod, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
+    let router = app.httpRoutes.get(method);
     if (router === undefined) {
         router = new Router();
-        this.httpRoutes.set(method, router);
+        app.httpRoutes.set(method, router);
     }
 
     return router.remove(cb);
 }
 
 // ASL import hook for module runtime 
-function __linkASLRuntime(this: RapidApp, appExports: any, runtime: ASLModuleRuntime, exports: any) {
+function __linkASLRuntime(app: RapidApp, appExports: any, runtime: ASLModuleRuntime, exports: any) {
     return {
         ...exports,
         app: {
             serve,
-            route: route.bind(this, runtime),
+            route: bind(route, app, runtime),
             ...appExports
         }
     };
@@ -82,11 +84,11 @@ export function __linkRapidApp(app: RapidApp, exports: any) {
     // Exports specific to the app
     const appExports = {
         name: app.pckgInfo.name,
-        remove: remove.bind(app)
+        remove: bind(remove, app)
     };
 
     return {
         ...exports,
-        __linkASLRuntime: __linkASLRuntime.bind(app, appExports)
+        __linkASLRuntime: bind(__linkASLRuntime, app, appExports)
     };
 }

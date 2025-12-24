@@ -177,6 +177,20 @@ class Ref<T> {
     }
 }
 
+/**
+ * For a given function, creates a bound function that has the same body as the original function.
+ * The this object of the bound function is associated with the specified object, and has the specified initial parameters.
+ * 
+ * This is used over `Function.prototype.bind` as it has arrow function semantics which optimize better.
+ * It is also used over an inline arrow function as it doesnt capture unnecessary variables due to scoping.
+ * 
+ * @param func The function to bind
+ * @param args Arguments to bind to the parameters of the function.
+ */
+export function bind<A extends any[], B extends any[], R>(func: (...args: [...A, ...B]) => R, ...args: A): (...args: B) => R {
+    return (...remaining: B) => func(...args, ...remaining);
+}
+
 export const ASL_EXTENSION = ".asl";
 export const ASL_EXTENSION_TS = `${ASL_EXTENSION}.ts`;
 export const ASL_EXTENSION_JS = `${ASL_EXTENSION}.js`;
@@ -331,10 +345,17 @@ class ASLRequestResult<T, ErrorType = any> {
 }
 
 /**
- * Static resolve handler for `ASLRequest`s.
+ * Static resolve handler for `Request`s.
  */
-function ASLRequestResolve<T, ErrorType = any>(resolve: (value: ASLRequestResult<T, ErrorType> | PromiseLike<ASLRequestResult<T, ErrorType>>) => void, result: T) {
-    resolve(new ASLRequestResult<T, ErrorType>(result));
+function ASLRequestResolve<T, ErrorType = any>(resolve: (value: ASLRequestResult<T, ErrorType> | PromiseLike<ASLRequestResult<T, ErrorType>>) => void) {
+    return (result: T | PromiseLike<T>) => {
+        if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<T>).then === "function") {
+            // If result is PromiseLike, we have to .then it
+            (result as PromiseLike<T>).then((result) => resolve(new ASLRequestResult<T, ErrorType>(result)));
+        } else {
+            resolve(new ASLRequestResult<T, ErrorType>(result as T));
+        }
+    };
 }
 
 /**
@@ -343,7 +364,7 @@ function ASLRequestResolve<T, ErrorType = any>(resolve: (value: ASLRequestResult
  */
 function ASLRequest<T, ErrorType = any>(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: ErrorType) => void) => void): Promise<ASLRequestResult<T, ErrorType>> {
     return new Promise<ASLRequestResult<T, ErrorType>>((resolve, reject) => {
-        executor((ASLRequestResolve as any).bind(undefined, resolve), reject);
+        executor(ASLRequestResolve(resolve), reject);
     }).catch(reason => new ASLRequestResult<T, ErrorType>(undefined, reason));
 }
 
@@ -522,7 +543,7 @@ class ASLRegistry {
                             // The function has the parameters `require`, `module` and `exports` to provide the necessary keywords.
                             //
                             // Note that `require` refers to `aslImport`, in ASL scripts the keyword is `require` for simplicity.a
-                            const moduleFunc = (new Function(`return (async function(${ASL_REQUIRE_KEYWORD}, __ASL, ${ASL_EXPORTS_KEYWORD}) {${code}\n}).bind(undefined);\n//# sourceMappingURL=${path}.map`))() as ASLModuleFunc;
+                            const moduleFunc = (new Function(`return (async (${ASL_REQUIRE_KEYWORD}, __ASL, ${ASL_EXPORTS_KEYWORD}) => {${code}\n});\n//# sourceMappingURL=${path}.map`))() as ASLModuleFunc;
 
                             // Create module info
                             const aslModule = new ASLModule(mid, path);
@@ -566,7 +587,7 @@ class ASLRegistry {
         return ASLRequest((resolve, reject) => {
             // Setup runtime
             runtime["resolve"] = resolve;
-            (runtime as any).require = envImport.bind(undefined, moduleInfo, runtime);
+            (runtime as any).require = bind(envImport, moduleInfo, runtime);
 
             // runtime is the ASL api
             const __ASL = runtime;

@@ -1,17 +1,18 @@
 import type { RapidApp } from "../rapid.cjs";
+import { bind } from "../rapid.cjs";
 
 import File from "fs/promises";
 import Path from "path";
 
 const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
 
-async function back(this: RapidApp, ...parts: string[]) {
+async function back(app: RapidApp, ...parts: string[]) {
     const {
         backBuildDir,
         backDir,
         flexBuildDir,
         flexDir
-    } = this.pckgInfo;
+    } = app.pckgInfo;
 
     let resolvedPath = Path.join(backBuildDir, ...parts);
 
@@ -25,13 +26,13 @@ async function back(this: RapidApp, ...parts: string[]) {
     return resolvedPath;
 }
 
-async function front(this: RapidApp, ...parts: string[]) {
+async function front(app: RapidApp, ...parts: string[]) {
     const {
         frontBuildDir,
         frontDir,
         flexBuildDir,
         flexDir
-    } = this.pckgInfo;
+    } = app.pckgInfo;
 
     let resolvedPath = Path.join(frontBuildDir, ...parts);
 
@@ -45,16 +46,16 @@ async function front(this: RapidApp, ...parts: string[]) {
     return resolvedPath;
 }
 
-function base(this: RapidApp, ...parts: string[]) {
-    const { baseDir } = this.pckgInfo;
+function base(app: RapidApp, ...parts: string[]) {
+    const { baseDir } = app.pckgInfo;
     return Path.join(baseDir, ...parts);
 }
 
 // Rapid App hook
 export function __linkRapidApp(app: RapidApp) {
     return {
-        back: back.bind(app),
-        front: front.bind(app),
-        base: base.bind(app)
+        back: bind(back, app),
+        front: bind(front, app),
+        base: bind(base, app)
     };
 }
