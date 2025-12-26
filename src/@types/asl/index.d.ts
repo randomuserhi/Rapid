@@ -3,22 +3,27 @@ export { };
 type ASLModuleObject = any;
 
 /** The result of a module execution */
-interface ASLModuleResult {
-    /** The module exports */
-    readonly exports: ASLModuleObject;
+interface ASLImportResult {
+    /** Error of the import if there was one */
+    readonly error: any;
 
     /** The runtime of the module */
     readonly runtime?: ASLModuleRuntime;
+
+    /**
+     * Obtain the exports from the import.
+     * 
+     * Throws an error if the import had failed. Can be checked manually with `.ok()`
+     */
+    exports: ASLModuleObject;
+
+    /** 
+     * Checks if the import was succesful
+     */
+    ok(): boolean;
 }
 
 interface ASLImportOptions {
-    /** 
-     * Is the type of import a default import? `import X from "X.js"` 
-     * 
-     * default: false
-     */
-    defaultImport: boolean;
-
     /** 
      * Should the import count as a dependency? 
      * If so, then invalidating that import also invalidates this module.
@@ -28,7 +33,7 @@ interface ASLImportOptions {
     updateDependencyGraph: boolean;
 }
 
-type ASLImportFunc = (path: string, options?: Partial<ASLImportOptions>) => Promise<ASLModuleResult>;
+type ASLImportFunc = (path: string, options?: Partial<ASLImportOptions>) => Promise<ASLImportResult>;
 
 declare global {
     type ASLModuleId = number;
@@ -45,7 +50,19 @@ declare global {
         /** Path to module file */
         readonly path: string;
 
-        readonly mid: ASLModuleId
+        /** Module ID */
+        readonly mid: ASLModuleId;
+
+        /**
+         * Did the runtime execute succesfully?
+         * The error can be read from `.error` if it did not run succesfully.
+         */
+        ok(): boolean
+
+        /**
+         * Error, if any occured.
+         */
+        error: any;
 
         /** 
          * Marks the module's exports as ready prior to end of module execution.
@@ -55,6 +72,9 @@ declare global {
 
         /**
          * Module exports
+         * 
+         * If the runtime has errored, the state of exports is unknown and cannot be relied upon.
+         * Please check the state of the runtime using `.ok()` first.
          */
         exports: ASLModuleObject;
 

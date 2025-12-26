@@ -20,49 +20,88 @@ export default function (babel: Babel): PluginObj {
     return {
         visitor: {
             Program(path) {
+                // Track if we need `__esModule` tag for export interop (only required for default exports)
+                let __esModuleInterop = false;
+
                 // Include ASL helper functions
                 let exportStarIdentifier: BabelTypesNamespace.Identifier | undefined = undefined; 
                 const createExportStarHelper = () => {
                     // export * from './module'
                     if (exportStarIdentifier === undefined) {
-                        exportStarIdentifier = path.scope.generateUidIdentifier("__ASL_exportStar");
-                        path.unshiftContainer("body", statements.ast`const ${exportStarIdentifier.name} = (this && this.${exportStarIdentifier.name}) || function(m, exports) {
+                        exportStarIdentifier = path.scope.generateUidIdentifier("ASL_exportStar");
+                        path.unshiftContainer("body", statements.ast`const ${exportStarIdentifier} = (this && this.${exportStarIdentifier}) || function(m, exports) {
                             for (var p in m) if (p !== "default") exports[p] = m[p];
                         };`);
                     }
+                    return exportStarIdentifier;
+                };
+
+                let importDefaultIdentifier: BabelTypesNamespace.Identifier | undefined = undefined; 
+                const createImportDefaultHelper = () => {
+                    // import def from './module'
+                    if (importDefaultIdentifier === undefined) {
+                        importDefaultIdentifier = path.scope.generateUidIdentifier("ASL_importDefault");
+                        path.unshiftContainer("body", statements.ast`const ${importDefaultIdentifier} = (this && this.${importDefaultIdentifier}) || function(mod) {
+                            return (mod && mod.__esModule) ? mod : { default: mod };
+                        };`);
+                    }
+                    return importDefaultIdentifier;
                 };
 
                 // Ammend imports
                 path.traverse({
                     ImportDeclaration(path) {
+                        const rebind = (name: string, expression: BabelCoreNamespace.types.MemberExpression | BabelCoreNamespace.types.Identifier) => {
+                            path.scope.bindings[name].referencePaths.forEach((refPath) => {
+                                if (refPath === path) return;
+                                refPath.replaceWith(expression);
+                            });
+                        };
+                        
                         const source = path.node.source.value;
-                        const specifiers = path.node.specifiers;
 
-                        const defaultSpecifiers = [];
-                        const importSpecifiers = [];
-                        const namespaceSpecifiers = [];
-                        for (const specifier of specifiers) {
+                        let moduleId: BabelTypesNamespace.Identifier | undefined = undefined; 
+                        const createModuleDecl = () => {
+                            if (moduleId === undefined) {
+                                moduleId = path.scope.generateUidIdentifier("ASL_module");
+                                path.insertBefore(statement.ast`const ${moduleId} = (await ${ASL_REQUIRE_KEYWORD}(${t.stringLiteral(source)})).exports`);
+                            }
+                            return moduleId;
+                        };
+
+                        let moduleDefaultId: BabelTypesNamespace.Identifier | undefined = undefined; 
+                        const createModuleDefaultDecl = () => {
+                            if (moduleDefaultId === undefined) {
+                                const decl = createModuleDecl();
+                                moduleDefaultId = path.scope.generateUidIdentifier(`${decl.name}_default`);
+                                path.insertBefore(statement.ast`const ${moduleDefaultId} = ${createImportDefaultHelper()}(${createModuleDecl()})`);
+                            }
+                            return moduleDefaultId;
+                        };
+
+                        for (const specifier of path.node.specifiers) {
                             const localName = specifier.local.name;
+
                             switch (specifier.type) {
                             case "ImportDefaultSpecifier": {
-                                defaultSpecifiers.push(`const ${localName} = (await ${ASL_REQUIRE_KEYWORD}("${source}", { defaultImport: true })).exports`);
+                                rebind(localName, t.memberExpression(
+                                    createModuleDefaultDecl(),
+                                    t.identifier("default")
+                                ));
                             } break;
                             case "ImportSpecifier": {
-                                if (!t.isIdentifier(specifier.imported)) throw new Error(`Unsupported Identifier - TODO(support this...)`);
-                                const importName = specifier.imported.name;
-                                importSpecifiers.push(importName === localName ? localName : `${importName}: ${localName}`);
+                                rebind(localName, t.memberExpression(
+                                    createModuleDecl(),
+                                    specifier.imported
+                                ));
                             } break;
                             case "ImportNamespaceSpecifier": {
-                                namespaceSpecifiers.push(`const ${localName} = (await ${ASL_REQUIRE_KEYWORD}("${source}")).exports`);
+                                rebind(localName, createModuleDecl());
                             } break;
                             }
                         }
 
-                        const statements = [];
-                        if (defaultSpecifiers.length > 0) statements.push(defaultSpecifiers.join(";\n"));
-                        if (importSpecifiers.length > 0) statements.push(`const { ${importSpecifiers.join(", ")} } = (await ${ASL_REQUIRE_KEYWORD}("${source}")).exports`);
-                        if (namespaceSpecifiers.length > 0) statements.push(namespaceSpecifiers.join(";\n"));
-                        path.replaceWith(statement.ast`${statements.join(";\n")}`);
+                        path.remove();
                     },
                     CallExpression(path) {
                         if (t.isImport(path.node.callee)) {
@@ -147,30 +186,63 @@ export default function (babel: Babel): PluginObj {
                                 const specifiers = path.node.specifiers;
                                 const source = path.node.source;
 
+                                let moduleId: BabelTypesNamespace.Identifier | undefined = undefined; 
+                                const createModuleDecl = () => {
+                                    if (moduleId === undefined) {
+                                        if (!source) throw new Error("Requires a valid source module");
+
+                                        moduleId = path.scope.generateUidIdentifier("ASL_module");
+                                        path.insertBefore(statement.ast`const ${moduleId} = (await ${ASL_REQUIRE_KEYWORD}(${source})).exports`);
+                                    }
+                                    return moduleId;
+                                };
+
+                                let moduleDefaultId: BabelTypesNamespace.Identifier | undefined = undefined; 
+                                const createModuleDefaultDecl = () => {
+                                    __esModuleInterop = true;
+                                    if (moduleDefaultId === undefined) {
+                                        const decl = createModuleDecl();
+                                        moduleDefaultId = path.scope.generateUidIdentifier(`${decl.name}_default`);
+                                        path.insertBefore(statement.ast`const ${moduleDefaultId} = ${createImportDefaultHelper()}(${createModuleDecl()})`);
+                                    }
+                                    return moduleDefaultId;
+                                };
+
                                 path.replaceWithMultiple(specifiers.map((specifier) => {
                                     switch (specifier.type) {
                                     case "ExportSpecifier": {
-                                        return t.expressionStatement(t.assignmentExpression(
-                                            '=',
-                                            t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), specifier.exported),
-                                            specifier.local
-                                        ));
+                                        if (!source) {
+                                            return t.expressionStatement(t.assignmentExpression(
+                                                '=',
+                                                t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), specifier.exported),
+                                                specifier.local
+                                            ));
+                                        } else {
+                                            const exportedName = t.isIdentifier(specifier.exported) ? specifier.exported.name : specifier.exported.value;
+                                            if (exportedName !== "default") {
+                                                return t.expressionStatement(t.assignmentExpression(
+                                                    '=',
+                                                    t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), specifier.exported),
+                                                    t.memberExpression(createModuleDecl(), specifier.exported)
+                                                ));
+                                            } else {
+                                                return statement.ast`${ASL_EXPORTS_KEYWORD}.default = ${createModuleDefaultDecl()}.default;`;
+                                            }
+                                        }
                                     }
                                     case "ExportNamespaceSpecifier": {
-                                        if (!source) throw new Error("ExportNamespaceSpecifier requires a source module");
-
-                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.${specifier.exported.name} = (await ${ASL_REQUIRE_KEYWORD}("${source.value}")).exports;`;
+                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.${specifier.exported} = ${createModuleDecl()};`;
                                     }
                                     case "ExportDefaultSpecifier": {
-                                        if (!source) throw new Error("ExportDefaultSpecifier requires a source module");
-
-                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.default = (await ${ASL_REQUIRE_KEYWORD}("${source.value}", { defaultImport: true })).exports;`;
+                                        return statement.ast`${ASL_EXPORTS_KEYWORD}.default = ${createModuleDefaultDecl}.default;`;
                                     }
                                     }
                                 }));
                             }
                         } break;
                         case "ExportDefaultDeclaration": {
+                            __esModuleInterop = true;
+
                             const declaration = path.node.declaration;
 
                             if (t.isFunctionDeclaration(declaration)) {
@@ -213,14 +285,17 @@ export default function (babel: Babel): PluginObj {
                         case "ExportAllDeclaration": {
                             const source = path.node.source.value;
 
-                            createExportStarHelper();
-                            
                             // export * from './module'
-                            path.replaceWithMultiple(statements.ast`${exportStarIdentifier!.name}((await ${ASL_REQUIRE_KEYWORD}("${source}")).exports, ${ASL_EXPORTS_KEYWORD});`);
+                            path.replaceWithMultiple(statements.ast`${createExportStarHelper()}((await ${ASL_REQUIRE_KEYWORD}("${source}")).exports, ${ASL_EXPORTS_KEYWORD});`);
                         } break;
                         }
                     }
                 });
+
+                if (__esModuleInterop) {
+                    // Emit `__esModule` tag following typescript and babel ES module interop rules
+                    path.unshiftContainer("body", statements.ast`Object.defineProperty(${ASL_EXPORTS_KEYWORD}, "__esModule", { value: true });`);
+                }
             }
         },
     };
