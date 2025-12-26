@@ -737,11 +737,14 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
         }
 
         throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
-    }).then(async (result) => {
+    }).then((result) => {
         // Link exports to importer's runtime
-        return LinkExports(contextRef, runtime, result);
+        if (result.ok()) return linkExports(runtime, result.exports, result.runtime);
+
+        // Error result
+        return ASLImportResult(result.runtime, result.exports, result.error);
     }).catch((error) => {
-        // Return unsuccessful module result
+        // Error result
         return ASLImportResult(undefined, undefined, error);
     });
 }
@@ -756,56 +759,51 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
  * modules implementing this to be aware of the importer, providing access to the importer's runtime.
  * It may then return different exports depending on the importer.
  * 
- * @param contextRef The execution context for the module performing the import
  * @param importer The runtime for the module performing the import
- * @param exports The exports of the importee
- * @param imported The runtime of the importee (if the exports originate from an ASLModule)
+ * @param exports The exports of the imported module
+ * @param imported The runtime of the imported module (if the exports originate from an ASLModule)
  * @returns linked exports
  */
-async function LinkExports(contextRef: ASLExecutionContext, importer: ASLModuleRuntime, result: ASLExecutionResult): Promise<ASLImportResult> {
-    if (result.ok()) {
-        // Remap `exports` to `_exports` to prevent clashing with commonjs `exports` keyword
-        const { exports: _exports, runtime } = result;
-        if (_exports !== undefined && Object.prototype.hasOwnProperty.call(_exports, ASL_RUNTIME_HOOK_NAME)) {
-            // Get environment from context
-            const env = contextRef.deref();
+async function linkExports(importer: ASLModuleRuntime, _exports: ASLExports, imported: ASLModuleRuntime | undefined): Promise<ASLImportResult> {
+    if (_exports !== undefined && Object.prototype.hasOwnProperty.call(_exports, ASL_RUNTIME_HOOK_NAME)) {
+        // Get environment from context
+        const env = importer.__internal.contextRef.deref();
 
-            // TODO(randomuserhi): Better error message
-            if (importer === undefined) throw new Error("Cannot link module without an ASL context.");
+        // TODO(randomuserhi): Better error message
+        if (importer === undefined) throw new Error("Cannot link module without an ASL context.");
 
-            // We use the exports as the key to support non-ASL modules with link hooks
-            let cache = env.linkedExportsCache.get(_exports);
-            if (cache === undefined) {
-                cache = new Map();
-                env.linkedExportsCache.set(_exports, cache);
-            }
-
-            let linkedExports = cache.get(importer);
-            if (linkedExports === undefined) {
-                linkedExports = await _exports[ASL_RUNTIME_HOOK_NAME](importer, _exports);
-
-                // Copy __esModule tag for es module interop to work properly
-                // Assumes that the linked exports and main module use the same convention
-                if (_exports.__esModule) {
-                    if (!linkedExports || !("default" in linkedExports)) 
-                        throw new Error("Original module was marked as using ES style default exports, but the linked exports are using common js style. This is not allowed, please use the same convention.");
-
-                    Object.defineProperty(linkedExports, "__esModule", {
-                        value: _exports.__esModule
-                    });
-                }
-
-                cache.set(importer, linkedExports);
-
-                // Clear out cache on module unload (if its an ASLModule)
-                importer.onAbort(() => cache.delete(importer));
-            }
-
-            return ASLImportResult(runtime, linkedExports);
+        // We use the exports as the key to support non-ASL modules with link hooks
+        let cache = env.linkedExportsCache.get(_exports);
+        if (cache === undefined) {
+            cache = new Map();
+            env.linkedExportsCache.set(_exports, cache);
         }
+
+        let linkedExports = cache.get(importer);
+        if (linkedExports === undefined) {
+            linkedExports = await _exports[ASL_RUNTIME_HOOK_NAME](importer, _exports);
+
+            // Copy __esModule tag for es module interop to work properly
+            // Assumes that the linked exports and main module use the same convention
+            if (_exports.__esModule) {
+                if (!linkedExports || !("default" in linkedExports)) 
+                    throw new Error("Original module was marked as using ES style default exports, but the linked exports are using common js style. This is not allowed, please use the same convention.");
+
+                Object.defineProperty(linkedExports, "__esModule", {
+                    value: _exports.__esModule
+                });
+            }
+
+            cache.set(importer, linkedExports);
+
+            // Clear out cache on module unload (if its an ASLModule)
+            importer.onAbort(() => cache.delete(importer));
+        }
+
+        return ASLImportResult(imported, linkedExports);
     }
 
-    return ASLImportResult(result.runtime, result.exports, result.error);
+    return ASLImportResult(imported, _exports);
 }
 
 type ASLExecutionContext = Ref<ASLEnvironment>;
