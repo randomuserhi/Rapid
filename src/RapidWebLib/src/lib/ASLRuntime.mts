@@ -409,16 +409,9 @@ class ASLRegistry {
     /**
      * Cancels a compilation of a module.
      * 
-     * @param compilation Compilation to cancel
-     * @param reject `reject` function used to settle the request promise
+     * @param resolve `resolve` function used to settle the request promise
      */
-    private cancel(compilation: ASLCompilationJob, resolve: (result: ASLCompilationResult) => void) {
-        // Unbind from context
-        compilation.contextRef.set(Ref.NULLPTR);
-
-        // Remove from pending
-        this.pending.delete(compilation.mid);
-
+    private static cancel(resolve: (result: ASLCompilationResult) => void) {
         // Reject request promise
         resolve(new ASLCompilationResult(undefined, new ASLCompilationCancelledError()));
     }
@@ -457,7 +450,7 @@ class ASLRegistry {
                 cancel: undefined!
             };
             _compilation.job = new Promise((resolve) => {
-                _compilation.cancel = this.cancel.bind(this, _compilation, resolve);
+                _compilation.cancel = bind(ASLRegistry.cancel, resolve);
 
                 // Try get module from cache
                 if (this.cache.has(mid)) {
@@ -519,11 +512,24 @@ class ASLRegistry {
                 if (_compilation.contextRef.isNull()) return;
 
                 const context = _compilation.contextRef.deref();
-                context.pending.delete(mid);
+                context.cleanupPendingCompilation(_compilation);
             });
         }
 
         return compilation.job;
+    }
+
+    /**
+     * Cleanup pending compilation
+     * 
+     * @param mid Module id
+     */
+    private cleanupPendingCompilation(compilation: ASLCompilationJob) {
+        // Unbind compilation
+        compilation.contextRef.set(Ref.NULLPTR);
+
+        // Remove from pending
+        if (!this.pending.delete(compilation.mid)) throw new Error("Could not find pending compilation job.");
     }
 
     /**
@@ -554,10 +560,11 @@ class ASLRegistry {
         const midsMap = new Map<ASLEnvironment, ASLModuleId[]>();
 
         for (const mid of mids) {
-            // If module is pending, cancel it
             const pending = this.pending.get(mid);
             if (pending !== undefined) {
+                // If module is pending, cancel it and clean up the compilation job
                 pending.cancel();
+                this.cleanupPendingCompilation(pending);
             } else if (!this.cache.delete(mid)) {
                 // Otherwise, if it is in cache, delete it. If it is not in the cache, 
                 // then module was never loaded and we can early return
@@ -660,6 +667,8 @@ type ASLEntryPoint = (__ASL_require: ASLImportFunc, __ASL: any, __ASL_exports: A
 /**
  * Import function used by executing modules when they are executed to import other modules into
  * the given environment.
+ * 
+ * Note that this method should never throw. It returns a result which has a status code to determine if it completed succesfully
  *
  * @param moduleInfo The information about the module making the import
  * @param runtime The module runtime of the module making the import
@@ -686,6 +695,9 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
     // Get runtime contextRef
     const contextRef = runtime.__internal.contextRef;
 
+    // If we have been detached, return a failed fetch
+    if (contextRef.isNull()) return new Promise((resolve) => resolve(ASLImportResult(undefined, undefined, new ASLExecutionCancelledError())));
+
     // Get environment from execution context
     const env = contextRef.deref();
 
@@ -702,7 +714,10 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
 
             const mid = registry.getMid(path);
 
-            if (mid === moduleInfo.mid) throw new ASLImportError("Cannot import self.");
+            if (mid === moduleInfo.mid) return new ASLExecutionResult(undefined, undefined, new ASLImportError("Cannot import self."));
+
+            // If we have been detached, return a failed fetch
+            if (contextRef.isNull()) return new ASLExecutionResult(undefined, undefined, new ASLExecutionCancelledError());
 
             // Get environment from execution context
             const env = contextRef.deref();
@@ -727,16 +742,16 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
         case ".node": {
             // Node import
                     
-            throw new ASLImportError(`Web based ASL does not support '.node' (native addons) style imports.`);
+            return new ASLExecutionResult(undefined, undefined, new ASLImportError(`Web based ASL does not support '.node' (native addons) style imports.`));
         }
         case ".cjs": {
             // Node import
                     
-            throw new ASLImportError(`Web based ASL does not support '.cjs' style imports.`);
+            return new ASLExecutionResult(undefined, undefined, new ASLImportError(`Web based ASL does not support '.cjs' style imports.`));
         }
         }
 
-        throw new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import.");
+        return new ASLExecutionResult(undefined, undefined, new Error("ASL imports require an extension to distinguish between ASL, MJS or CJS style import."));
     }).then((result) => {
         // Link exports to importer's runtime
         if (result.ok()) return linkExports(runtime, result.exports, result.runtime);
@@ -1143,19 +1158,9 @@ export class ASLEnvironment {
     /**
      * Cancels the execution of a given module.
      * 
-     * @param execution Execution to cancel
-     * @param reject `reject` function from the execution promise
+     * @param resolve `resolve` function from the execution promise
      */
-    private cancel(execution: ASLExecutionJob, runtime: ASLModuleRuntime, resolve: (result: ASLExecutionResult) => void) {
-        // Unbind execution context
-        execution.contextRef.set(Ref.NULLPTR);
-
-        // Remove from pending
-        this.pending.delete(execution.mid);
-
-        // Clear out cache linked export cache
-        this.linkedExportsCache.delete(runtime.__internal.exports);
-
+    private static cancel(runtime: ASLModuleRuntime, resolve: (result: ASLExecutionResult) => void) {
         // mark execution as cancelled
         runtime.error = new ASLExecutionCancelledError();
         resolve(new ASLExecutionResult(runtime, undefined, runtime.error));
@@ -1231,7 +1236,7 @@ export class ASLEnvironment {
                     this.moduleRuntimes.set(mid, runtime);
 
                     // Assign cancel function
-                    _execution.cancel = this.cancel.bind(this, _execution, runtime, resolve);
+                    _execution.cancel = bind(ASLEnvironment.cancel, runtime, resolve);
 
                     registry.compile(mid, this).then(result => {
                         if (!result.ok()) throw result.error;
@@ -1254,8 +1259,11 @@ export class ASLEnvironment {
                         // Resolve execution with result
                         resolve(result);
                     }).catch((error) => {
-                        // Mark runtime has failing with said error
-                        runtime.error = error;
+                        if (runtime.ok()) {
+                            // Mark runtime as failing with said error, if it hasn't already failed for another reason
+                            // such as if the execution was cancelled.
+                            runtime.error = error;
+                        }
 
                         // Create error result
                         const result = new ASLExecutionResult(runtime, undefined, runtime.error);
@@ -1277,7 +1285,7 @@ export class ASLEnvironment {
             execution = _execution;
             this.pending.set(mid, execution);
 
-            // Clean up request on finish
+            // Clean up execution on completion
             _execution.job.then(() => {
                 // Check if module is still bound to an execution context,
                 // If not then the module must have been detached (unloaded from environment)
@@ -1285,9 +1293,7 @@ export class ASLEnvironment {
                 if (_execution.contextRef.isNull()) return;
 
                 const context = _execution.contextRef.deref();
-
-                // Remove from pending for book keeping
-                context.pending.delete(mid);
+                context.cleanupPendingExecution(_execution);
             });
         }
 
@@ -1298,16 +1304,27 @@ export class ASLEnvironment {
     }
 
     /**
+     * Cleans up the pending request
+     * 
+     * @param execution Pending execution
+     */
+    private cleanupPendingExecution(execution: ASLExecutionJob) {
+        // Remove from pending for book keeping
+        if (!this.pending.delete(execution.mid)) throw new Error("Could not find pending execution job.");
+    }
+
+    /**
      * Auxilary method for `unload`
      * 
      * @param mid Module to unload
      * @param unloadedModules set of modules that were unloaded
      */
     private _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>, abortControllers: Set<AbortController>) {
-        // If module is pending, cancel it
         const request = this.pending.get(mid);
         if (request !== undefined) {
+            // If module is pending, cancel it and clean up the execution
             request.cancel();
+            this.cleanupPendingExecution(request);
         } else if (!this.cache.delete(mid)) {
             // Otherwise, if it is in cache, delete it. If it is not in the cache, 
             // then module was never loaded and we can early return
@@ -1317,12 +1334,22 @@ export class ASLEnvironment {
         // Add to set of unloaded modules
         unloadedModules.add(mid);
 
-        // collect module destructors and delete module runtime
+        // Get runtime
         const runtime = this.moduleRuntimes.get(mid);
         if (runtime === undefined) throw new Error(`Unable to find runtime for module: ${mid} being unloaded.`);
-        abortControllers.add(runtime.__internal.abort);
-        this.moduleRuntimes.delete(mid);
 
+        // Unbind runtime from the environment
+        runtime.__internal.contextRef.set(Ref.NULLPTR);
+        
+        // Delete runtime
+        this.moduleRuntimes.delete(mid);
+        
+        // Collect module destructors
+        abortControllers.add(runtime.__internal.abort);
+        
+        // Clear out cache linked export cache
+        this.linkedExportsCache.delete(runtime.__internal.exports);
+        
         // Unload modules that depend on this one
         const archetypesContainingModule = this.typemap.get(mid);
         if (archetypesContainingModule === undefined) return;
