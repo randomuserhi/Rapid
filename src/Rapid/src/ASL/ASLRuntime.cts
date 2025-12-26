@@ -693,7 +693,7 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
     const contextRef = runtime.__internal.contextRef;
 
     // If we have been detached, return a failed fetch
-    if (contextRef.isNull()) return new Promise((resolve) => resolve(ASLImportResult(undefined, undefined, new ASLExecutionCancelledError())));
+    if (contextRef.isNull()) return new Promise((resolve) => resolve(ASLImportResult(undefined, undefined, new ASLExecutionCancelledError(runtime))));
 
     // Get environment from execution context
     const env = contextRef.deref();
@@ -714,7 +714,7 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
             if (mid === moduleInfo.mid) new ASLExecutionResult(undefined, undefined, new ASLImportError("Cannot import self."));
 
             // If we have been detached, return a failed fetch
-            if (contextRef.isNull()) return new ASLExecutionResult(undefined, undefined, new ASLExecutionCancelledError());
+            if (contextRef.isNull()) return new ASLExecutionResult(undefined, undefined, new ASLExecutionCancelledError(runtime));
 
             // Get environment from execution context
             const env = contextRef.deref();
@@ -1156,7 +1156,7 @@ export class ASLEnvironment {
      */
     private static cancel(runtime: ASLModuleRuntime, resolve: (result: ASLExecutionResult) => void) {
         // mark execution as cancelled
-        runtime.error = new ASLExecutionCancelledError();
+        runtime.error = new ASLExecutionCancelledError(runtime);
         resolve(new ASLExecutionResult(runtime, undefined, runtime.error));
     }
 
@@ -1471,8 +1471,8 @@ export class ASLCompilationCancelledError extends Error {
  * Error that occurs when execution is cancelled
  */
 export class ASLExecutionCancelledError extends Error {
-    constructor() {
-        super("Module execution was cancelled.");
+    constructor(runtime: ASLModuleRuntime) {
+        super(`Module '${runtime.path}' execution was cancelled.`);
         this.name = "ASLExecutionCancelledError";
         if ((Error as any).captureStackTrace) {
             (Error as any).captureStackTrace(this, ASLExecutionCancelledError);
