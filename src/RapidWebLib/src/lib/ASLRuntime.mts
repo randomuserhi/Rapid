@@ -1053,6 +1053,23 @@ export class ASLEnvironment {
     }
 
     /**
+     * A post-processing step that can be performed on any module exports that implements it.
+     *
+     * Allows exports to link with an ASL module runtime (typically the runtime importing it) 
+     * to produce a different set of exports specific to said runtime.
+     * 
+     * ASL require calls automatically perform this step (unlike `ASLEnvironment.fetch`) which allows
+     * modules implementing this to be aware of the importer, providing access to the importer's runtime.
+     * It may then return different exports depending on the importer.
+     * 
+     * @param importer The runtime for the module performing the import
+     * @param exports The exports of the imported module
+     * @param imported The runtime of the imported module (if the exports originate from an ASLModule)
+     * @returns linked exports
+     */
+    public linkExports = linkExports;
+
+    /**
      * Traverses internal archetype graph to return the next archetype when the given module id is added.
      * Creates a new archetype if it did not already exist in the graph.
      * 
