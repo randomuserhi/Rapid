@@ -7,7 +7,7 @@ import type Stream from "stream";
 import { pipeline } from "stream/promises";
 import { MapLike } from "typescript";
 import { WebSocketServer } from "ws";
-import { ASL_EXTENSION_JS, ASLEnvironment, ASLModuleId, ASLModuleInfo, ASLModuleObject, ASLPath, registry, setASLIsCaseSensitive } from "./ASL/ASLRuntime.cjs";
+import { ASL_CONFIG, ASL_EXTENSION_JS, ASLEnvironment, ASLExports, ASLModuleId, ASLModuleInfo, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 import { Router } from "./Router.cjs";
 
@@ -29,7 +29,7 @@ function isFileSystemCaseSensitive() {
 const CASE_SENSITIVE_FS = isFileSystemCaseSensitive();
 
 /** Set ASL approapriately */
-setASLIsCaseSensitive(CASE_SENSITIVE_FS);
+ASL_CONFIG.isCaseSensitive = CASE_SENSITIVE_FS;
 
 /** Helper that determines if a file exists or not */
 const fileExists = (path: string) => File.access(path, File.constants.R_OK).then(() => true).catch(() => false);
@@ -137,13 +137,13 @@ class RapidLib {
     /** Package */
     private readonly app: RapidApp;
 
-    private cache = new Map<string, ASLModuleObject>();
+    private cache = new Map<string, ASLExports>();
 
     constructor(app: RapidApp) {
         this.app = app;
     }
 
-    public resolve(path: string): ASLModuleObject {
+    public resolve(path: string): ASLExports {
         // strip ".js" and ".cjs" extension from path
         if (!ASLPath.endsWithSeparator(path)) {
             const extLoc = ASLPath.findExtname(path);
@@ -427,7 +427,7 @@ export class RapidRuntime {
      * @returns The regular import hook result as well as the package info of the app the imported module belongs to.
      *          Undefined if the imported module is not associated with an app.
      */
-    private async _aslImportHook(module: ASLModuleInfo, path: string): Promise<[string | ASLModuleObject, PackageInfo | undefined]> {
+    private async _aslImportHook(module: ASLModuleInfo, path: string): Promise<[string | ASLExports, PackageInfo | undefined]> {
         path = ASLPath.fixASLExt(path);
 
         // Get the module's associated app
@@ -563,7 +563,7 @@ export class RapidRuntime {
     }
 
     /** Import hook to resolve ASL environment paths */
-    private async aslImportHook(module: ASLModuleInfo, path: string): Promise<string | ASLModuleObject> {
+    private async aslImportHook(module: ASLModuleInfo, path: string): Promise<string | ASLExports> {
         const [resolved, pckgInfo] = await this._aslImportHook(module, path);
         if (pckgInfo !== undefined && typeof resolved === "string" && ASLPath.extname(resolved) === ASL_EXTENSION_JS) {
             // Map mid to a rapid app

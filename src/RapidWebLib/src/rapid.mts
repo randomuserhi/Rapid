@@ -1,4 +1,4 @@
-import { ASLEnvironment, ASLModuleId, ASLPath, defaultImportHook, getASLBaseURL, registry, setASLBaseURL, setASLIsCaseSensitive } from "/rapid/ASLRuntime.mjs";
+import { ASL_CONFIG, ASL_RUNTIME_HOOK_NAME, ASLEnvironment, ASLModuleId, ASLPath, defaultImportHook, registry } from "/rapid/ASLRuntime.mjs";
 import { Router } from "/rapid/Router.mjs";
 
 // Rapid lib exports
@@ -45,15 +45,12 @@ export function __linkRapidApp(app: App, exports: any) {
 
 // Setup ASL
 
-const APP_LINK_HOOK = "__linkRapidApp";
-
-setASLBaseURL(window.location.origin);
+ASL_CONFIG.baseURL = new URL(window.location.origin);
 
 // TODO(randomuserhi): Fetch request from backend whether it is case sensitive or not via a Get Request
 //                     This must be awaited on as we cannot continue until we know if paths are case
 //                     sensitive or not to prevent malforming the registry.
-const IS_CASE_SENSITIVE = false;
-setASLIsCaseSensitive(IS_CASE_SENSITIVE);
+ASL_CONFIG.isCaseSensitive = false;
 
 // Load config and trigger entry point as required
 
@@ -77,8 +74,8 @@ if (rapid !== undefined) {
 
                 // Check whether path resolves to the same base URL
                 // if not, then its a full URL to an external resource and we should not handle it
-                const url = new URL(path, getASLBaseURL());
-                if (url.origin === getASLBaseURL()?.origin) {
+                const url = new URL(path, ASL_CONFIG.baseURL);
+                if (url.origin === ASL_CONFIG.baseURL?.origin) {
                     // Get pathname as it ensure path forms a valid url
                     path = url.pathname;
         
@@ -89,23 +86,23 @@ if (rapid !== undefined) {
                         if (!ASLPath.endsWithSeparator(path) && ASLPath.extname(path) === "") path += ".mjs";
         
                         // Import directly
-                        let obj = await import(new URL(path, getASLBaseURL()).toString()); 
+                        let obj = await import(new URL(path, ASL_CONFIG.baseURL).toString()); 
         
                         // Trigger App link hook so rapid standard library functions
                         // know what app they are associated with
-                        if (Object.prototype.hasOwnProperty.call(obj, APP_LINK_HOOK)) {
+                        if (Object.prototype.hasOwnProperty.call(obj, ASL_RUNTIME_HOOK_NAME)) {
                             let app = midToApp.get(module.mid);
                             if (app === undefined) {
                                 // Launch app if necessary
                                 let name = ASLPath.first(new URL(module.path).pathname);
-                                if (!IS_CASE_SENSITIVE) name = name.toLowerCase();
+                                if (!ASL_CONFIG.isCaseSensitive) name = name.toLowerCase();
 
                                 app = new App(name);
                                 
                                 midToApp.set(module.mid, app);
                             }
 
-                            obj = obj[APP_LINK_HOOK](app, obj);
+                            obj = obj[ASL_RUNTIME_HOOK_NAME](app, obj);
                         }
         
                         return obj;

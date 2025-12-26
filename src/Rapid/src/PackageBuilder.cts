@@ -775,11 +775,14 @@ function tsWriteFileOverride(this: ASLBuilder, origWriteFile: ((fileName: string
             return;
         }
 
+        // Strip source mapping comment
+        babelResult.code = babelResult.code.replace(/\/\/# sourceMappingURL=.*$/gm, "");
+
         // Write file as normal, with transpiled code
         origWriteFile?.(fileKey, babelResult.code, writeByteOrderMark);
 
         // Insert offset to mapping (All ASL scripts have a fixed offset due to how the script is generated via `Function` eval
-        babelResult.map.mappings = ";;" + babelResult.map.mappings;
+        babelResult.map.mappings = ";;;" + babelResult.map.mappings;
 
         // Write transformed source map
         origWriteFile?.(`${fileKey}.map`, JSON.stringify(babelResult.map), writeByteOrderMark);

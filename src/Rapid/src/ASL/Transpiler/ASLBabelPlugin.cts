@@ -64,7 +64,9 @@ export default function (babel: Babel): PluginObj {
                         const createModuleDecl = () => {
                             if (moduleId === undefined) {
                                 moduleId = path.scope.generateUidIdentifier("ASL_module");
-                                path.insertBefore(statement.ast`const ${moduleId} = (await ${ASL_REQUIRE_KEYWORD}(${t.stringLiteral(source)})).exports`);
+                                const importExpression = statement.ast`const ${moduleId} = (await ${ASL_REQUIRE_KEYWORD}(${t.stringLiteral(source)})).exports`;
+                                importExpression.loc = path.node.loc; // Generate mapping for source maps (this gets interpreted as the import statement)
+                                path.insertBefore(importExpression);
                             }
                             return moduleId;
                         };
@@ -192,7 +194,9 @@ export default function (babel: Babel): PluginObj {
                                         if (!source) throw new Error("Requires a valid source module");
 
                                         moduleId = path.scope.generateUidIdentifier("ASL_module");
-                                        path.insertBefore(statement.ast`const ${moduleId} = (await ${ASL_REQUIRE_KEYWORD}(${source})).exports`);
+                                        const importExpression = statement.ast`const ${moduleId} = (await ${ASL_REQUIRE_KEYWORD}(${source})).exports`;
+                                        importExpression.loc = path.node.loc; // Generate mapping for source maps (this gets interpreted as the import statement)
+                                        path.insertBefore(importExpression);
                                     }
                                     return moduleId;
                                 };

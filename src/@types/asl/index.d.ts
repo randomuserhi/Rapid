@@ -15,7 +15,7 @@ interface ASLImportResult {
      * 
      * Throws an error if the import had failed. Can be checked manually with `.ok()`
      */
-    exports: ASLModuleObject;
+    readonly exports: ASLModuleObject;
 
     /** 
      * Checks if the import was succesful
