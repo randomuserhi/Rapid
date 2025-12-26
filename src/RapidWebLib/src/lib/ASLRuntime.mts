@@ -266,13 +266,13 @@ export class ASLModuleRuntime {
      * Reference to environment runtime is part of. 
      * When runtime is unloaded, this becomes a nullref 
      */
-    public readonly envRef: Ref<ASLEnvironment>;
+    public readonly contextRef: ASLExecutionContext;
 
-    constructor(mid: ASLModuleId, envRef: Ref<ASLEnvironment>) {
+    constructor(mid: ASLModuleId, contextRef: ASLExecutionContext) {
         this.path = registry.getPath(mid)!;
         this.mid = mid;
 
-        this.envRef = envRef;
+        this.contextRef = contextRef;
 
         this.exports = {};
 
@@ -593,8 +593,8 @@ class ASLRegistry {
                 .then(() => runtime.ready())
                 .catch((error) => {
                     // Trigger error hook as long as runtime is still part of environment (has not been unloaded)
-                    if (!runtime.envRef.isNull()) {
-                        runtime.envRef.deref().errorHook(runtime.mid, error);
+                    if (!runtime.contextRef.isNull()) {
+                        runtime.contextRef.deref().errorHook(runtime.mid, error);
                     }
 
                     // Resolve error result
