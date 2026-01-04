@@ -371,7 +371,6 @@ export class RapidRuntime {
         for (const directory of directories) {
             directoryPatterns[normalizePathPattern(Path.join(directory, "*"))] = directory;
         }
-        console.log(directoryPatterns);
         this.packageWatchBuilder.onIncrementalBuild = (paths) => {
             if (paths.length === 0) return;
 
