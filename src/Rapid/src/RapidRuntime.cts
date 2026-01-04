@@ -195,7 +195,7 @@ async function serveResource(path: string, res: Http.ServerResponse) {
  */
 export class RapidApp {
     /** The runtime this app is part of */
-    private readonly runtime: RapidRuntime;
+    public readonly runtime: RapidRuntime;
 
     /** Package */
     public pckgInfo: PackageInfo;

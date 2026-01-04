@@ -647,6 +647,11 @@ interface ASLImportOptions {
      * default: true
      */
     updateDependencyGraph: boolean;
+
+    /**
+     * Override the interpreted import type
+     */
+    importType?: ".mjs" | ".js" | ".asl" | ".cjs" | ".node" | typeof ASL_EXTENSION | typeof ASL_EXTENSION_JS;
 }
 
 /** Function that imports another module from an ASL module execution context. */
@@ -684,7 +689,7 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
         for (const key in options) {
             const k = key as keyof ASLImportOptions;
             if (Object.prototype.hasOwnProperty.call(options, k)) {
-                parsedOptions[k] = options[k] as any;
+                parsedOptions[k] = options[k] as never;
             }
         }
     }
@@ -702,7 +707,7 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
         // If import hook returned an object directly, use that instead
         if (typeof path !== "string") return new ASLExecutionResult(undefined, path);
         // Resolve type of import
-        const importType = extname(path);
+        const importType = parsedOptions.importType ?? extname(path);
 
         switch (importType) {
         case ASL_EXTENSION:

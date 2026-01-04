@@ -52,8 +52,9 @@ function base(app: RapidApp, ...parts: string[]) {
 }
 
 // Rapid App hook
-export function __linkRapidApp(app: RapidApp) {
+export function __linkRapidApp(app: RapidApp, exports: any) {
     return {
+        ...exports,
         back: bind(back, app),
         front: bind(front, app),
         base: bind(base, app)

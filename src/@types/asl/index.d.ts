@@ -31,6 +31,11 @@ interface ASLImportOptions {
      * default: true
      */
     updateDependencyGraph: boolean;
+
+    /**
+     * Override the interpreted import type
+     */
+    importType?: ".mjs" | ".js" | ".asl" | ".cjs" | ".node" | ".asl.ts" | ".asl.js";
 }
 
 type ASLImportFunc = (path: string, options?: Partial<ASLImportOptions>) => Promise<ASLImportResult>;
