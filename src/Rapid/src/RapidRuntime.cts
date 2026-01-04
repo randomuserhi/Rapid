@@ -43,7 +43,7 @@ const CHAR_FORWARD_SLASH = 47; /* / */
  */
 function normalizePathPattern(path: string) {
     if (path.length !== 0) {
-        path = Path.posix.normalize(path);
+        path = Path.normalize(path).replaceAll("\\", "/");
         if (path.codePointAt(path.length - 1) === CHAR_FORWARD_SLASH) path = path.slice(0, -1);
         if (!Path.isAbsolute(path) && path.codePointAt(0) !== CHAR_FORWARD_SLASH) path = "/" + path;
     } else {
@@ -371,6 +371,7 @@ export class RapidRuntime {
         for (const directory of directories) {
             directoryPatterns[normalizePathPattern(Path.join(directory, "*"))] = directory;
         }
+        console.log(directoryPatterns);
         this.packageWatchBuilder.onIncrementalBuild = (paths) => {
             if (paths.length === 0) return;
 

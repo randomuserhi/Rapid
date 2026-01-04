@@ -459,7 +459,8 @@ async function generateInternalRepo(
                     addTsPath(paths, `${dependency.name}/*`, relPath(tsConfigDir, Path.join(dependency.baseDir, include, "*")), browserStyleImports);
                 } else {
                     for (const path of pathOverrides.public) {
-                        addTsPath(paths, Path.posix.join(dependency.name, path), relPath(tsConfigDir, Path.join(dependency.baseDir, include, path)), browserStyleImports);
+                        // Note that path matching uses "/" instead of "\\"
+                        addTsPath(paths, Path.join(dependency.name, path).replaceAll("\\", "/"), relPath(tsConfigDir, Path.join(dependency.baseDir, include, path)), browserStyleImports);
                     }
                 }
             }
