@@ -43,7 +43,7 @@ const CHAR_FORWARD_SLASH = 47; /* / */
  */
 function normalizePathPattern(path: string) {
     if (path.length !== 0) {
-        path = Path.normalize(path).replaceAll("\\", "/");
+        path = Path.posix.normalize(path);
         if (path.codePointAt(path.length - 1) === CHAR_FORWARD_SLASH) path = path.slice(0, -1);
         if (!Path.isAbsolute(path) && path.codePointAt(0) !== CHAR_FORWARD_SLASH) path = "/" + path;
     } else {
@@ -471,7 +471,7 @@ export class RapidRuntime {
             // This is for standard library node modules like "path" or "file" etc...
 
             // Since module resolution is typically handled by unix paths, convert backslash to unix style slashes
-            path = path.replace("\\", "/");
+            // path = path.replaceAll("\\", "/");
 
             // Special case for rapidlib:
             if (ASLPath.first(path) === "rapid") {

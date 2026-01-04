@@ -49,6 +49,7 @@ function relPath(baseDir: string, path: string) {
 interface PackagePathOverrides {
     types?: Ts.MapLike<string[]>;
     paths?: Ts.MapLike<string[]>;
+    public?: string[];
 }
 
 /**
@@ -453,7 +454,14 @@ async function generateInternalRepo(
             const dependentConfig = dependency.configSync();
 
             for (const include of includes) {
-                addTsPath(paths, `${dependency.name}/*`, relPath(tsConfigDir, Path.join(dependency.baseDir, include, "*")), browserStyleImports);
+                const pathOverrides: PackagePathOverrides | undefined = (dependentConfig as any)[include];
+                if (pathOverrides === undefined || pathOverrides.public === undefined) {
+                    addTsPath(paths, `${dependency.name}/*`, relPath(tsConfigDir, Path.join(dependency.baseDir, include, "*")), browserStyleImports);
+                } else {
+                    for (const path of pathOverrides.public) {
+                        addTsPath(paths, Path.posix.join(dependency.name, path), relPath(tsConfigDir, Path.join(dependency.baseDir, include, path)), browserStyleImports);
+                    }
+                }
             }
 
             for (const name of pathOverrideNames) {
