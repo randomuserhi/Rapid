@@ -739,10 +739,10 @@ export class RapidRuntime {
                     app = new RapidApp(this, pckgInfo);
                     this.apps.set(pckgName, app);
                 }
-
-                // Load entry point
-                await this.loadEntry(app);
             }
+
+            // Ensure app's entry point is fully loaded before proceeding
+            await this.loadEntry(app);
     
             // Pass request onto the given package
             req.url = pckgUrl;
