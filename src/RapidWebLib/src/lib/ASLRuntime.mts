@@ -987,17 +987,16 @@ class ASLArchetype {
     readonly type: ASLModuleId[];
     readonly typeId: ASLArchetypeId;
 
+    /**
+     * Set of modules part of this archetype
+     */
+    readonly modules = new Set<ASLModuleId>();
+
     /** 
      * Map of archetypes that stem of this one. 
      * As a module imports another, it traverses the add map to find the archetype it belongs to.
      */
     readonly addMap = new Map<ASLModuleId, ASLArchetype>();
-
-    /**
-     * Map of archetypes that stem of this one.
-     * As a module is removed, traverses backwards to find previous archetype.
-     */
-    readonly removeMap = new Map<ASLModuleId, ASLArchetype>();
 
     /**
      * @param type Expected to be sorted in ascending order
@@ -1006,6 +1005,141 @@ class ASLArchetype {
     constructor(type: ASLModuleId[], typeId: ASLArchetypeId) {
         this.type = type;
         this.typeId = typeId;
+    }
+}
+
+/** Manages graph of archetypes */
+class ASLArchetypeGraph {
+    /**
+     * Map of all archetypes that exist on the graph
+     */
+    readonly archetypes = new Map<ASLArchetypeId, ASLArchetype>();
+
+    /** 
+     * Root archetype all modules are part of by default
+     */
+    private readonly rootArchetype = new ASLArchetype([], "");
+    
+    /**
+     * Archetype associated with each module.
+     */
+    private readonly moduleArchetype = new Map<ASLModuleId, ASLArchetype>();
+
+    /**
+     * Maps a module id to all archetypes that are dependent on it
+     */
+    private readonly dependentArchetypeMap = new Map<ASLModuleId, Set<ASLArchetype>>();
+
+    constructor() {
+        this.archetypes.set(this.rootArchetype.typeId, this.rootArchetype);
+    }
+
+    /**
+     * Traverses a module through the archetype graph by adding a dependency
+     * 
+     * @param mid Module to add dependency to
+     * @param add Dependency
+     */
+    public traverse(mid: ASLModuleId, dependency: ASLModuleId) {
+        // Module is implicitly dependent on self already
+        if (mid === dependency) return;
+
+        let from = this.moduleArchetype.get(mid);
+        if (from === undefined) {
+            from = this.rootArchetype;
+        }
+
+        // Check add map if we have cached the traversal path
+        let arch = from.addMap.get(dependency);
+        if (arch === undefined) {
+            // Otherwise generate new type
+
+            let insertLocation = 0;
+            let high = from.type.length;
+
+            while (insertLocation < high) {
+                const middle = (insertLocation + high) >>> 1;
+                if (from.type[middle] < dependency) {
+                    insertLocation = middle + 1;
+                } else {
+                    high = middle;
+                }
+            }
+
+            // Module already exists in our archetype, we don't need to traverse anywhere
+            if (from.type[insertLocation] === dependency) return;
+
+            // Create a new archetype that contains this module
+            const newType = [...from.type];
+            newType.splice(insertLocation, 0, dependency);
+
+            const newTypeId = newType.join(",");
+
+            // Try and get archetype from cache
+            arch = this.archetypes.get(newTypeId);
+            if (arch === undefined) {
+                // Create archetype, cache it
+                arch = new ASLArchetype(newType, newTypeId);
+                this.archetypes.set(newTypeId, arch);
+
+                // Update dependentArchetypeMap with new archetype
+                for (const mid of newType) {
+                    let dependentArchetypeSet = this.dependentArchetypeMap.get(mid);
+                    if (dependentArchetypeSet === undefined) {
+                        dependentArchetypeSet = new Set();
+                        this.dependentArchetypeMap.set(mid, dependentArchetypeSet);
+                    }
+                    dependentArchetypeSet.add(arch);
+                }
+            }
+
+            // update to traversal cache
+            from.addMap.set(dependency, arch);
+        }
+
+        // Migrate module between archetypes
+        this.moduleArchetype.set(mid, arch);
+        arch.modules.add(mid);
+        from.modules.delete(mid);
+
+        return arch;
+    }
+
+    /**
+     * Helper for `detach`.
+     */
+    private _detach(mid: ASLModuleId, detached: Set<ASLModuleId>): void {
+        detached.add(mid);
+
+        const arch = this.moduleArchetype.get(mid);
+        if (arch === undefined) return;
+
+        // Remove from its own archetype
+        this.moduleArchetype.delete(mid);
+        arch.modules.delete(mid);
+
+        // Find all modules dependent on this one
+        const dependentArchetypes = this.dependentArchetypeMap.get(mid);
+        if (dependentArchetypes === undefined) return;
+
+        // Detach all dependent modules
+        for (const arch of dependentArchetypes) {
+            for (const mid of arch.modules) {
+                this._detach(mid, detached);
+            }
+        }
+    }
+
+    /**
+     * Detaches a module from the archetype graph, also detaching modules dependent on it
+     * 
+     * @param mid Module to detach
+     * @returns Set of all modules detached as a result
+     */
+    public detach(mid: ASLModuleId, detached?: Set<ASLModuleId>): Set<ASLModuleId> {
+        if (detached === undefined) detached = new Set<ASLModuleId>();
+        this._detach(mid, detached);
+        return detached;
     }
 }
 
@@ -1036,28 +1170,10 @@ export class ASLEnvironment {
      */
     readonly moduleRuntimes = new Map<ASLModuleId, ASLModuleRuntime>();
 
-    /** 
-     * Archetype tracking for modules.
-     * 
-     * Per environment as scripts may have environment-based dependencies.
-     * Such as the case when modules dynamically import other modules based on user input.
-     */
-    readonly rootArchetype = new ASLArchetype([], "");
-
     /**
-     * Archetype associated with each loaded module.
+     * Archetype graph for managing dependencies
      */
-    readonly moduleArchetype = new Map<ASLModuleId, ASLArchetype>();
-
-    /**
-     * Map of all archetypes managed by the environment
-     */
-    readonly archetypes = new Map<ASLArchetypeId, ASLArchetype>();
-
-    /**
-     * Maps a module id to all archetypes that contain said type
-     */
-    readonly typemap = new Map<ASLModuleId, Set<ASLArchetype>>();
+    readonly archetypeGraph = new ASLArchetypeGraph();
 
     /**
      * Import hook that the user can define to transform paths before they are used
@@ -1068,11 +1184,6 @@ export class ASLEnvironment {
      * Error hook that the user can define to handle module errors
      */
     public errorHook: ASLErrorHook = defaultErrorHook;
-
-    constructor() {
-        // Register root archetype
-        this.archetypes.set(this.rootArchetype.typeId, this.rootArchetype);
-    }
 
     /**
      * A post-processing step that can be performed on any module exports that implements it.
@@ -1092,74 +1203,13 @@ export class ASLEnvironment {
     public linkExports = linkExports;
 
     /**
-     * Traverses internal archetype graph to return the next archetype when the given module id is added.
-     * Creates a new archetype if it did not already exist in the graph.
-     * 
-     * @param from Current archetype
-     * @param mid Module id being added to the current archetype
-     * @returns Archetype after adding the given module
-     */
-    private traverse(from: ASLArchetype, mid: ASLModuleId) {
-        // Check add map if we have cached the traversal path
-        let arch = from.addMap.get(mid);
-        if (arch !== undefined) {
-            return arch;
-        }
-
-        let insertLocation = 0;
-        let high = from.type.length;
-
-        while (insertLocation < high) {
-            const middle = (insertLocation + high) >>> 1;
-            if (from.type[middle] < mid) {
-                insertLocation = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-
-        // Module already exists in our archetype
-        if (from.type[insertLocation] === mid) return from;
-
-        // Create a new archetype that contains this module
-        const newType = [...from.type];
-        newType.splice(insertLocation, 0, mid);
-
-        const newTypeId = newType.join(",");
-
-        // Try and get archetype from cache
-        arch = this.archetypes.get(newTypeId);
-        if (arch === undefined) {
-            // Create archetype, cache it
-            arch = new ASLArchetype(newType, newTypeId);
-            this.archetypes.set(newTypeId, arch);
-        }
-
-        // register to typemap
-        let archList = this.typemap.get(mid);
-        if (archList === undefined) {
-            archList = new Set();
-            this.typemap.set(mid, archList);
-        }
-        archList.add(arch);
-
-        // update to traversal cache
-        from.addMap.set(mid, arch);
-        arch.removeMap.set(mid, from);
-
-        return arch;
-    }
-
-    /**
      * Updates the dependency graph of the provided module.
      * 
      * @param module Module to update dependencies of
      * @param dependency Dependency to add to module
      */
     public updateDependencyGraph(module: ASLModuleId, dependency: ASLModuleId) {
-        // Update modules archetype as approapriate
-        const arch = this.moduleArchetype.get(module)!;
-        this.moduleArchetype.set(module, this.traverse(arch, dependency));
+        this.archetypeGraph.traverse(module, dependency);
     }
 
     /**
@@ -1248,11 +1298,8 @@ export class ASLEnvironment {
                     registry.compile(mid, this).then(result => {
                         if (!result.ok()) throw result.error;
 
-                        // Get execution context
-                        const context = contextRef.deref();
-
-                        // Assign base archetype
-                        context.moduleArchetype.set(mid, context.traverse(context.rootArchetype, mid));
+                        // Check if execution context is still valid
+                        contextRef.deref();
 
                         // Execute module
                         return result.module.exec(runtime);
@@ -1321,12 +1368,12 @@ export class ASLEnvironment {
     }
 
     /**
-     * Auxilary method for `unload`
+     * Auxilary method for `unload` that unloads a single module and adds its abort controller to a set
      * 
      * @param mid Module to unload
-     * @param unloadedModules set of modules that were unloaded
+     * @param abortControllers Set of abort controllers
      */
-    private _unload(mid: ASLModuleId, unloadedModules: Set<ASLModuleId>, abortControllers: Set<AbortController>) {
+    private _unload(mid: ASLModuleId, abortControllers: Set<AbortController>) {
         const request = this.pending.get(mid);
         if (request !== undefined) {
             // If module is pending, cancel it and clean up the execution
@@ -1337,9 +1384,6 @@ export class ASLEnvironment {
             // then module was never loaded and we can early return
             return;
         }
-
-        // Add to set of unloaded modules
-        unloadedModules.add(mid);
 
         // Get runtime
         const runtime = this.moduleRuntimes.get(mid);
@@ -1356,36 +1400,6 @@ export class ASLEnvironment {
         
         // Clear out cache linked export cache
         this.linkedExportsCache.delete(runtime.__internal.exports);
-        
-        // Unload modules that depend on this one
-        const archetypesContainingModule = this.typemap.get(mid);
-        if (archetypesContainingModule === undefined) return;
-
-        for (const archetype of archetypesContainingModule) {
-            for (const module of archetype.type) {
-                this._unload(module, unloadedModules, abortControllers);
-            }
-        }
-
-        // Remove module from dependency in registry
-        const dependencies: Map<ASLModuleId, Set<ASLEnvironment>> = (registry as any).dependencies;
-        dependencies.get(mid)?.delete(this);
-
-        // Remove module from archetype book keeping
-        const archetype = this.moduleArchetype.get(mid);
-        if (archetype !== undefined) {
-            for (const module of archetype.type) {
-                this.typemap.get(module)?.delete(archetype);
-            }
-            this.moduleArchetype.delete(mid);
-        }
-        this.typemap.delete(mid);
-
-        // Detach from archetype graph cache (addMap, removeMap) and general cache
-        for (const archetype of archetypesContainingModule) {
-            archetype.removeMap.get(mid)!.addMap.delete(mid);
-            this.archetypes.delete(archetype.typeId);
-        }
     }
 
     /**
@@ -1414,11 +1428,15 @@ export class ASLEnvironment {
         });
 
         const unloadedModules = new Set<ASLModuleId>();
-        const abortControllers = new Set<AbortController>();
         for (const mid of mids) {
-            this._unload(mid, unloadedModules, abortControllers);
+            this.archetypeGraph.detach(mid, unloadedModules);
         }
 
+        const abortControllers = new Set<AbortController>();
+        for (const mid of unloadedModules) {
+            this._unload(mid, abortControllers);
+        }
+        
         // Trigger destructors, we do this after unload process such that
         // if a destructor triggers a re-import, it doesnt break the archetype graph 
         // (destructor is called during unload process, so subsequent unload after re-import may delete
