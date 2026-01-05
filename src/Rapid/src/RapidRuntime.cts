@@ -7,7 +7,7 @@ import type Stream from "stream";
 import { pipeline } from "stream/promises";
 import { MapLike } from "typescript";
 import { WebSocketServer } from "ws";
-import { ASL_CONFIG, ASL_EXTENSION_JS, ASLEnvironment, ASLExports, ASLModuleId, ASLModuleInfo, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
+import { ASL_CONFIG, ASL_EXTENSION_JS, ASLEnvironment, ASLExecutionResult, ASLExports, ASLModuleId, ASLModuleInfo, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 import { Router } from "./Router.cjs";
 
@@ -329,6 +329,11 @@ export class RapidRuntime {
      */
     private apps = new Map<string, RapidApp>();
 
+    /**
+     * The entry point for the app. Undefined if it was not loaded yet
+     */
+    private entryPoint?: Promise<ASLExecutionResult> = undefined;
+
     /** 
      * Maps a module to its app.
      * Used such that each module can be associated with its running app.
@@ -404,20 +409,33 @@ export class RapidRuntime {
     }
 
     /**
-     * Loads the entry point for a given app
+     * Loads the entry point for a given app if it has not been loaded already.
+     * 
      * @param app 
      * @param pckgInfo 
      */
     private async loadEntry(app: RapidApp) {
+        if (this.entryPoint !== undefined) {
+            // If we already have an entry point, check it loaded properly
+            // If it has, then we do not need to load it again.
+            const result = await this.entryPoint;
+            if (result.ok()) return;
+        }
+
+        // Otherwise load the entry point
+
         const config = await app.pckgInfo.config(this.isWatching(app.pckgInfo));
-        let entryPoint = config.back?.entry;
-        if (entryPoint !== undefined) {
-            entryPoint = Path.join(app.pckgInfo.baseDir, ".build", "back", ASLPath.fixASLExt(entryPoint));
+        let entry = config.back?.entry;
+        if (entry !== undefined) {
+            entry = Path.join(app.pckgInfo.baseDir, ".build", "back", ASLPath.fixASLExt(entry));
             
             // Ensure to associate the entry point with this app
-            this.midToApp.set(registry.getMid(entryPoint), app);
+            this.midToApp.set(registry.getMid(entry), app);
             
-            await this.environment.fetch(entryPoint);
+            this.entryPoint = this.environment.fetch(entry);
+            
+            // Wait for execution to complete
+            await this.entryPoint;
         }
     }
 
@@ -720,10 +738,10 @@ export class RapidRuntime {
                     // Launch app instance
                     app = new RapidApp(this, pckgInfo);
                     this.apps.set(pckgName, app);
-
-                    // Load entry point
-                    await this.loadEntry(app);
                 }
+
+                // Load entry point
+                await this.loadEntry(app);
             }
     
             // Pass request onto the given package

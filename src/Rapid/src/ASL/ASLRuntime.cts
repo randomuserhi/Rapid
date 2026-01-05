@@ -858,6 +858,8 @@ class ASLExecutionResult {
     }
 }
 
+export type { ASLExecutionResult };
+
 /**
  * Executes the given module, providing the necessary parameters.
  * 
