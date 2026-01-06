@@ -5,7 +5,7 @@ import OS from "os";
 import Path from "path";
 import type Stream from "stream";
 import { pipeline } from "stream/promises";
-import { MapLike } from "typescript";
+import Ts, { MapLike } from "typescript";
 import { WebSocketServer } from "ws";
 import { ASL_CONFIG, ASL_EXTENSION_JS, ASLEnvironment, ASLExecutionResult, ASLExports, ASLModuleId, ASLModuleInfo, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
 import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
@@ -368,6 +368,21 @@ export class RapidRuntime {
         this.packageWatchBuilder = new PackageWatchBuilder(this.packageRegistry, typeDir);
         this.packageBuilder = new PackageBuilder(typeDir);
 
+        // Error diagnostics
+        this.packageWatchBuilder.reportDiagnostic = (diagnostic) => {
+            const message = Ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+
+            if (diagnostic.file) {
+                const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(
+                    diagnostic.start!
+                );
+                const fileName = diagnostic.file.fileName;
+                console.log(`${fileName} (${line + 1},${character + 1}): ${message}`);
+            } else {
+                console.log(message);
+            }
+        };
+
         // setup ASL environment
         this.environment.importHook = this.aslImportHook.bind(this);
 
@@ -549,9 +564,9 @@ export class RapidRuntime {
                         for (const path of paths[match.pattern]) {
                             let resolvedPath: string;
                             if (Path.basename(path) === "*") {
-                                resolvedPath = Path.join(baseDir, Path.dirname(path), match.postfix);
+                                resolvedPath = Path.join(pckgInfo.baseDir, Path.dirname(path), match.postfix);
                             } else {
-                                resolvedPath = Path.join(baseDir, path);
+                                resolvedPath = Path.join(pckgInfo.baseDir, path);
                             }
                             if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
                         }
@@ -566,9 +581,9 @@ export class RapidRuntime {
                         for (const path of paths[match.pattern]) {
                             let resolvedPath: string;
                             if (Path.basename(path) === "*") {
-                                resolvedPath = Path.join(baseDir, Path.dirname(path), match.postfix);
+                                resolvedPath = Path.join(pckgInfo.baseDir, Path.dirname(path), match.postfix);
                             } else {
-                                resolvedPath = Path.join(baseDir, path);
+                                resolvedPath = Path.join(pckgInfo.baseDir, path);
                             }
                             if (await fileExists(resolvedPath)) return [resolvedPath, pckgInfo];
                         }

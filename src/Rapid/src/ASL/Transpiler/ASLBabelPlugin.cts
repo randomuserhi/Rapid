@@ -48,15 +48,30 @@ export default function (babel: Babel): PluginObj {
                     return importDefaultIdentifier;
                 };
 
+                // Defer rebinding and removal until AFTER we create new nodes so we can recrawl and grab created references
+                const rebindJobs: (() => void)[] = [];
+                const nodeRemoveJobs: (() => void)[] = [];
+
                 // Ammend imports
                 path.traverse({
                     ImportDeclaration(path) {
                         const rebind = (name: string, expression: BabelCoreNamespace.types.MemberExpression | BabelCoreNamespace.types.Identifier) => {
-                            path.scope.bindings[name].referencePaths.forEach((refPath) => {
-                                if (refPath === path) return;
-                                const node = t.cloneNode(expression);
-                                node.loc = refPath.node.loc;
-                                refPath.replaceWith(node);
+                            rebindJobs.push(() => {
+                                path.scope.bindings[name].referencePaths.forEach((refPath) => {
+                                    if (refPath === path) return;
+
+                                    // Skip export specifiers
+                                    if (
+                                        refPath.parentPath?.isExportSpecifier() &&
+                                        refPath.parentKey === "local"
+                                    ) {
+                                        return;
+                                    }
+
+                                    const node = t.cloneNode(expression);
+                                    node.loc = refPath.node.loc;
+                                    refPath.replaceWith(node);
+                                });
                             });
                         };
                         
@@ -105,13 +120,14 @@ export default function (babel: Babel): PluginObj {
                             }
                         }
 
-                        path.remove();
+                        nodeRemoveJobs.push(() => path.remove());
                     },
                     CallExpression(path) {
                         if (t.isImport(path.node.callee)) {
                             const node = t.callExpression(t.identifier(ASL_REQUIRE_KEYWORD), path.node.arguments);
                             node.loc = path.node.loc;
-                            path.replaceWith(node);
+                            path.insertBefore(node);
+                            nodeRemoveJobs.push(() => path.remove());
                         }
                     },
                 });
@@ -119,26 +135,46 @@ export default function (babel: Babel): PluginObj {
                 // Handle exports
                 path.traverse({
                     ExportDeclaration(path) {
-                        const rebind = (name: string) => {
-                            path.scope.bindings[name].referencePaths.forEach((refPath) => {
-                                if (refPath === path) return;
-                                const node = t.memberExpression(
-                                    t.identifier(ASL_EXPORTS_KEYWORD),
-                                    t.identifier(name)
-                                );
-                                node.loc = refPath.node.loc;
-                                refPath.replaceWith(node);
-                            });
-                            path.scope.bindings[name].constantViolations.forEach((refPath) => {
-                                if (refPath === path) return;
-                                if (t.isAssignmentExpression(refPath.node)) {
+                        const rebind = (name: string, toDefault: boolean = false) => {
+                            rebindJobs.push(() => {
+                                path.scope.bindings[name].referencePaths.forEach((refPath) => {
+                                    if (refPath === path) return;
+
+                                    // Skip export specifiers
+                                    if (
+                                        refPath.parentPath?.isExportSpecifier() &&
+                                        refPath.parentKey === "local"
+                                    ) {
+                                        return;
+                                    }
+
                                     const node = t.memberExpression(
                                         t.identifier(ASL_EXPORTS_KEYWORD),
-                                        t.identifier(name)
+                                        t.identifier(toDefault ? "default" : name)
                                     );
-                                    node.loc = refPath.get("left").node.loc;
-                                    refPath.get("left").replaceWith(node);
-                                }
+                                    node.loc = refPath.node.loc;
+                                    refPath.replaceWith(node);
+                                });
+                                path.scope.bindings[name].constantViolations.forEach((refPath) => {
+                                    if (refPath === path) return;
+
+                                    // Skip export specifiers
+                                    if (
+                                        refPath.parentPath?.isExportSpecifier() &&
+                                        refPath.parentKey === "local"
+                                    ) {
+                                        return;
+                                    }
+
+                                    if (t.isAssignmentExpression(refPath.node)) {
+                                        const node = t.memberExpression(
+                                            t.identifier(ASL_EXPORTS_KEYWORD),
+                                            t.identifier(toDefault ? "default" : name)
+                                        );
+                                        node.loc = refPath.get("left").node.loc;
+                                        refPath.get("left").replaceWith(node);
+                                    }
+                                });
                             });
                         };
 
@@ -155,11 +191,13 @@ export default function (babel: Babel): PluginObj {
                                     t.functionExpression(undefined, params, body, generator, async)
                                 ));
                                 node.loc = path.node.loc;
-                                path.replaceWith(node);
+
+                                path.insertBefore(node);
+                                nodeRemoveJobs.push(() => path.remove());
 
                                 rebind(id.name);
                             } else if (t.isVariableDeclaration(declaration)) {
-                                path.replaceWithMultiple(declaration.declarations.map((declarator) => {
+                                path.insertBefore(declaration.declarations.map((declarator) => {
                                     if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
 
                                     if (declarator.init) {
@@ -180,6 +218,7 @@ export default function (babel: Babel): PluginObj {
                                         return node;
                                     }
                                 }));
+                                nodeRemoveJobs.push(() => path.remove());
 
                                 declaration.declarations.forEach((declarator) => {
                                     if (!t.isIdentifier(declarator.id)) throw new Error("Unsupported declarator pattern");
@@ -196,7 +235,9 @@ export default function (babel: Babel): PluginObj {
                                     t.classExpression(undefined, superClass, body, decorators)
                                 ));
                                 node.loc = path.node.loc;
-                                path.replaceWith(node);
+
+                                path.insertBefore(node);
+                                nodeRemoveJobs.push(() => path.remove());
 
                                 rebind(id.name);
                             } else {
@@ -227,7 +268,7 @@ export default function (babel: Babel): PluginObj {
                                     return moduleDefaultId;
                                 };
 
-                                path.replaceWithMultiple(specifiers.map((specifier) => {
+                                path.insertBefore(specifiers.map((specifier) => {
                                     switch (specifier.type) {
                                     case "ExportSpecifier": {
                                         if (!source) {
@@ -240,24 +281,21 @@ export default function (babel: Babel): PluginObj {
                                             return node;
                                         } else {
                                             const exportedName = t.isIdentifier(specifier.exported) ? specifier.exported.name : specifier.exported.value;
-                                            if (exportedName !== "default") {
-                                                const node = t.expressionStatement(t.assignmentExpression(
-                                                    '=',
-                                                    t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), specifier.exported),
-                                                    t.memberExpression(createModuleDecl(), specifier.exported)
-                                                ));
-                                                node.loc = specifier.loc;
-                                                return node;
-                                            } else {
-                                                const node = statement.ast`${ASL_EXPORTS_KEYWORD}.default = ${createModuleDefaultDecl()}.default;`;
-                                                node.loc = specifier.loc;
-                                                return node;
-                                            }
+                                            if (exportedName === "default") __esModuleInterop = true;
+                                            
+                                            const node = t.expressionStatement(t.assignmentExpression(
+                                                '=',
+                                                t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), specifier.exported),
+                                                t.memberExpression(createModuleDecl(), specifier.local)
+                                            ));
+                                            node.loc = specifier.loc;
+                                            return node;
                                         }
                                     }
                                     case "ExportNamespaceSpecifier": {
                                         const node = statement.ast`${ASL_EXPORTS_KEYWORD}.${specifier.exported} = ${createModuleDecl()};`;
                                         node.loc = specifier.loc;
+                                        rebind(specifier.exported.name);
                                         return node;
                                     }
                                     case "ExportDefaultSpecifier": {
@@ -267,6 +305,7 @@ export default function (babel: Babel): PluginObj {
                                     }
                                     }
                                 }));
+                                nodeRemoveJobs.push(() => path.remove());
                             }
                         } break;
                         case "ExportDefaultDeclaration": {
@@ -287,7 +326,10 @@ export default function (babel: Babel): PluginObj {
                                     )
                                 );
                                 node.loc = path.node.loc;
-                                path.replaceWith(node);
+                                path.insertBefore(node);
+                                nodeRemoveJobs.push(() => path.remove());
+
+                                if (id) rebind(id.name, true);
                             } else if (t.isClassDeclaration(declaration)) {
                                 const { id, superClass, body, decorators } = declaration;
 
@@ -301,7 +343,10 @@ export default function (babel: Babel): PluginObj {
                                     )
                                 );
                                 node.loc = path.node.loc;
-                                path.replaceWith(node);
+                                path.insertBefore(node);
+                                nodeRemoveJobs.push(() => path.remove());
+
+                                if (id) rebind(id.name, true);
                             } else if (t.isExpression(declaration)) {
                                 const node = t.expressionStatement(
                                     t.assignmentExpression(
@@ -311,10 +356,11 @@ export default function (babel: Babel): PluginObj {
                                     )
                                 );
                                 node.loc = path.node.loc;
-                                path.replaceWith(node);
+                                path.insertBefore(node);
+                                nodeRemoveJobs.push(() => path.remove());
                             } else if (t.isTSDeclareFunction(declaration)) {
                                 // Skip Typescript declarations
-                                path.remove();
+                                nodeRemoveJobs.push(() => path.remove());
                                 return;
                             } else {
                                 throw new Error(`Unknown export declaration type.`);
@@ -327,11 +373,25 @@ export default function (babel: Babel): PluginObj {
 
                             const node = statement.ast`${createExportStarHelper()}((await ${ASL_REQUIRE_KEYWORD}("${source}")).exports, ${ASL_EXPORTS_KEYWORD});`;
                             node.loc = path.node.loc;
-                            path.replaceWith(node);
+                            path.insertBefore(node);
+                            nodeRemoveJobs.push(() => path.remove());
                         } break;
                         }
                     }
                 });
+
+                // Re-crawl to get new references for created nodes
+                path.scope.crawl();
+
+                // Rebind jobs
+                for (const job of rebindJobs) {
+                    job();
+                }
+
+                // Remove jobs
+                for (const job of nodeRemoveJobs) {
+                    job();
+                }
 
                 if (__esModuleInterop) {
                     // Emit `__esModule` tag following typescript and babel ES module interop rules
