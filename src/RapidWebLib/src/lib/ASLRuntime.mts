@@ -738,10 +738,8 @@ function ASLImport(moduleInfo: ASLModuleInfo, runtime: ASLModuleRuntime, path: s
         case ".mjs": {
             // ESM import
 
-            // Add `__esModule` tag to ES modules, following typescript & babel interop rules
             const esModule = await import(path);
-            if ("__esModule" in esModule) console.warn("ASL ES Module interop: module already has `__esModule` tag, which is unexpected.");
-            Object.defineProperty(esModule, "__esModule", { value: true });
+            
             return new ASLExecutionResult(undefined, esModule);
         }
         case ".node": {

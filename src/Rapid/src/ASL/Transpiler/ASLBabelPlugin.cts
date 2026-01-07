@@ -36,13 +36,23 @@ export default function (babel: Babel): PluginObj {
                     return exportStarIdentifier;
                 };
 
+                let isBrowserIdentifier: BabelTypesNamespace.Identifier | undefined = undefined;
                 let importDefaultIdentifier: BabelTypesNamespace.Identifier | undefined = undefined; 
                 const createImportDefaultHelper = () => {
+                    if (isBrowserIdentifier === undefined) {
+                        isBrowserIdentifier = path.scope.generateUidIdentifier("ASL_isBrowser");
+                        path.unshiftContainer("body", statement.ast`const ${isBrowserIdentifier} = typeof window !== "undefined" && typeof window.document !== "undefined";`);
+                    }
+                    
                     // import def from './module'
                     if (importDefaultIdentifier === undefined) {
                         importDefaultIdentifier = path.scope.generateUidIdentifier("ASL_importDefault");
                         path.unshiftContainer("body", statement.ast`const ${importDefaultIdentifier} = (this && this.${importDefaultIdentifier}) || function(mod) {
-                            return (mod && mod.__esModule) ? mod : { default: mod };
+                            if (!${isBrowserIdentifier} || Object.isExtensible(mod)) {
+                                return (mod && mod.__esModule) ? mod : { default: mod };
+                            } else {
+                                return mod;
+                            }
                         };`);
                     }
                     return importDefaultIdentifier;
@@ -282,7 +292,7 @@ export default function (babel: Babel): PluginObj {
                                         } else {
                                             const exportedName = t.isIdentifier(specifier.exported) ? specifier.exported.name : specifier.exported.value;
                                             if (exportedName === "default") __esModuleInterop = true;
-                                            
+
                                             const node = t.expressionStatement(t.assignmentExpression(
                                                 '=',
                                                 t.memberExpression(t.identifier(ASL_EXPORTS_KEYWORD), specifier.exported),

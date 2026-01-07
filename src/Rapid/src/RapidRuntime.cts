@@ -212,6 +212,11 @@ export class RapidApp {
     /** List of static paths to check */
     private staticFrontPaths: string[];
 
+    /**
+     * The entry point for the app. Undefined if it was not loaded yet
+     */
+    public entryPoint?: Promise<ASLExecutionResult> = undefined;
+
     constructor(runtime: RapidRuntime, pckgInfo: PackageInfo) {
         this.runtime = runtime;
         this.pckgInfo = pckgInfo;
@@ -329,11 +334,6 @@ export class RapidRuntime {
      */
     private apps = new Map<string, RapidApp>();
 
-    /**
-     * The entry point for the app. Undefined if it was not loaded yet
-     */
-    private entryPoint?: Promise<ASLExecutionResult> = undefined;
-
     /** 
      * Maps a module to its app.
      * Used such that each module can be associated with its running app.
@@ -426,14 +426,13 @@ export class RapidRuntime {
     /**
      * Loads the entry point for a given app if it has not been loaded already.
      * 
-     * @param app 
-     * @param pckgInfo 
+     * @param app
      */
     private async loadEntry(app: RapidApp) {
-        if (this.entryPoint !== undefined) {
+        if (app.entryPoint !== undefined) {
             // If we already have an entry point, check it loaded properly
             // If it has, then we do not need to load it again.
-            const result = await this.entryPoint;
+            const result = await app.entryPoint;
             if (result.ok()) return;
         }
 
@@ -447,10 +446,10 @@ export class RapidRuntime {
             // Ensure to associate the entry point with this app
             this.midToApp.set(registry.getMid(entry), app);
             
-            this.entryPoint = this.environment.fetch(entry);
+            app.entryPoint = this.environment.fetch(entry);
             
             // Wait for execution to complete
-            await this.entryPoint;
+            await app.entryPoint;
         }
     }
 

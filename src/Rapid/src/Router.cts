@@ -171,6 +171,10 @@ export class Router<Args extends any[]> {
 
     /** Matches in the order patterns are registered. */
     public async match(path: string, ...args: Args) {
+        // Strip query parameters
+        const query = path.indexOf("?");
+        if (query >= 0) path = path.slice(0, query);
+
         const route = new Pattern(path);
 
         let next: void | typeof Router["NO_MATCH"] | typeof Router["NEXT"] = Router.NO_MATCH;

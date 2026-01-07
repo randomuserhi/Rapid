@@ -38,8 +38,23 @@ async function serve(path: string, res: Http.ServerResponse) {
     
     res.writeHead(200, { 'Content-Type': contentType });
     
-    const stream = FileSync.createReadStream(path);
-    await pipeline(stream, res);
+    try {
+        const stream = FileSync.createReadStream(path);
+        await pipeline(stream, res);
+    } catch(err: any) {
+        switch(err?.code) {
+        case "ENOENT": {
+            res.statusCode = 404;
+            res.end("Not Found");
+        } break;
+        case "EISDIR": {
+            res.statusCode = 500;
+            res.end("EISDIR");
+        } break;
+        case "ERR_STREAM_PREMATURE_CLOSE": break;
+        default: throw err;
+        }
+    }
 }
 
 function route(app: RapidApp, runtime: ASLModuleRuntime, method: RestMethod, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void) {
