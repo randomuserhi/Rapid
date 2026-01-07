@@ -3,7 +3,7 @@ import Chokidar, { FSWatcher } from "chokidar";
 import FileSync from "fs";
 import File from "fs/promises";
 import Path from "path";
-import Ts from "typescript";
+import Ts, { MapLike } from "typescript";
 import { ASL_EXTENSION_JS, ASL_EXTENSION_JS_MAP, ASL_EXTENSION_TS, ASLPath } from "./ASL/ASLRuntime.cjs";
 import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
 import { Result } from "./PromiseResult.cjs";
@@ -355,6 +355,9 @@ async function generateInternalRepo(
         lib?: string[],
         types?: string[],
 
+        /** Additional paths to include (part of standard library) */
+        standardLibPaths?: MapLike<string>;
+
         /** Compilation variants, to support various file types (ASL, CJS, MJS) */
         variants: Ts.MapLike<{
             browserStyleImports: boolean,
@@ -378,6 +381,7 @@ async function generateInternalRepo(
         additionalDependencies,
         lib,
         types,
+        standardLibPaths,
         variants
     } = options;
 
@@ -447,6 +451,12 @@ async function generateInternalRepo(
         if (rapidLib) {
             addTsPath(paths, "rapid", relPath(tsConfigDir, Path.join(typeDir, "rapid", name, "rapid.d.ts")), browserStyleImports);
             addTsPath(paths, "rapid/*", relPath(tsConfigDir, Path.join(typeDir, "rapid", name, "lib", "*")), browserStyleImports);
+        }
+
+        if (standardLibPaths) {
+            for (const path in standardLibPaths) {
+                addTsPath(paths, path, relPath(tsConfigDir, Path.join(typeDir, standardLibPaths[path])), browserStyleImports);
+            }
         }
 
         // add dependency type paths
@@ -642,8 +652,13 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             pathOverrideNames: ["back", "flex"],
             lib: ["ES2022", "DOM"],
             types: [
-                Path.join(typeDir, "node")
+                Path.join(typeDir, "node"),
             ],
+            standardLibPaths: {
+                "typescript": "typescript/typescript.d.ts",
+                "chokidar": "chokidar/index.d.ts",
+                "ws": "ws/index.d.ts"
+            },
             pckg: info,
             typeDir,
             createFolder: config.back !== undefined,

@@ -52,6 +52,7 @@ try {
 
     await mkdir(path.join(typesFolder, "node"));
     await cp("./node_modules/@types/node", path.join(typesFolder, "node"), { recursive: true });
+    await cp("./node_modules/@types/ws", path.join(typesFolder, "ws"), { recursive: true });
 
     console.log("\nBuild complete!");
 } catch (e) {
