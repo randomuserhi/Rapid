@@ -536,196 +536,279 @@ async function generateInternalRepo(
 }
 
 /**
+ * Map of package initialization jobs to prevent 2 of the same jobs running at the same time.
+ * The key is the path to the config file being initialized. 
+ * It should be the resolved full path.
+ */
+const initJobs = new Map<string, Promise<void>>();
+
+interface InitPackageOptions {
+    /** Initialize dependencies as well */
+    initDependencies: boolean;
+
+    /** Force initialization on self and all dependencies */
+    force: boolean;
+
+    /** Only forces initialization on self, not its dependencies */
+    forceSelf: boolean;
+}
+
+/**
  * Initializes a given package, generating all necessary typescript files and folders required for building
  * 
  * @param registry Package registry for resolving dependencies
  * @param configPath Path to config file
  * @param typeDir Path to default types for packages
  */
-async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir: string) {
-    // Get the package config
-    const config = await info.config(true);
-
-    // Resolve dependency paths
-    const dependencies: PackageInfo[] = [];
-    if (config.dependencies !== undefined) {
-        const jobs: Promise<void>[] = [];
-    
-        for (const dependency of config.dependencies) {
-            // Skip dependency on self, this is implicit
-            if (dependency === info.name) continue;
-    
-            jobs.push(registry.findPckg(dependency)
-                .then(info => {
-                    if (info !== undefined) {
-                        dependencies.push(info);
-                    }
-                })
-            );
-        }
-    
-        await Promise.all(jobs);
-    }
-
-    // Generate the main config
-    const tsconfigPath = Path.join(info.baseDir, "tsconfig.json");
-    const tsconfig: TsConfig = {
-        files: [],
-        compilerOptions: {
-            composite: true,
-            tsBuildInfoFile: relPath(info.baseDir, Path.join(info.buildDir, ".tsbuildinfo")),
-            noEmit: true
-        },
-        references: []
+async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir: string, options?: Partial<InitPackageOptions>) {
+    // Create default options
+    const parsedOptions: InitPackageOptions = {
+        initDependencies: true,
+        force: false,
+        forceSelf: false
     };
-    // Add sub-repos as reference for typescript to build them as required
-    if (config.back !== undefined) {
+
+    // Parse provided options
+    if (options !== undefined) {
+        for (const key in options) {
+            const k = key as keyof InitPackageOptions;
+            if (Object.prototype.hasOwnProperty.call(options, k)) {
+                parsedOptions[k] = options[k] as never;
+            }
+        }
+    }
+    
+    let job = initJobs.get(info.configPath);
+    if (job === undefined) {
+        // Get the package config
+        const config = await info.config(true);
+
+        if (!parsedOptions.forceSelf && !parsedOptions.force && await fileStat(info.TsconfigDir)) {
+            // If we are not forcing the initialization, and the tsconfig folder already exists, 
+            // skip as we assume the package has already been initialized
+            return;
+        }
+
+        // Resolve dependency paths
+        const dependencies: PackageInfo[] = [];
+        if (config.dependencies !== undefined) {
+            const jobs: Promise<void>[] = [];
+    
+            for (const dependency of config.dependencies) {
+            // Skip dependency on self, this is implicit
+                if (dependency === info.name) continue;
+    
+                jobs.push(registry.findPckg(dependency)
+                    .then(info => {
+                        if (info !== undefined) {
+                            dependencies.push(info);
+                        }
+                    })
+                );
+            }
+    
+            await Promise.all(jobs);
+        }
+
+        if (parsedOptions.initDependencies) {
+            // Initialize dependencies
+            // TODO(randomuserhi): Discover circular dependencies and early exit them / throw an error
+            const jobs: Promise<void>[] = [];
+    
+            for (const dependency of dependencies) {
+                jobs.push(initPackage(registry, dependency, typeDir, { 
+                    initDependencies: true,
+                    force: parsedOptions.force,
+                    forceSelf: false
+                }));
+            }
+    
+            await Promise.all(jobs);
+        }
+
+        job = (async () => {
+
+            // Generate the main config
+            const tsconfigPath = Path.join(info.baseDir, "tsconfig.json");
+            const tsconfig: TsConfig = {
+                files: [],
+                compilerOptions: {
+                    composite: true,
+                    tsBuildInfoFile: relPath(info.baseDir, Path.join(info.buildDir, ".tsbuildinfo")),
+                    noEmit: true
+                },
+                references: []
+            };
+            // Add sub-repos as reference for typescript to build them as required
+            if (config.back !== undefined) {
             tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, `tsconfig${ASL_EXTENSION_TS}.json`)) });
             tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, "tsconfig.cts.json")) });
             tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_BACK_DIRNAME, "tsconfig.mts.json")) });
-    }
-    if (config.front !== undefined) {
+            }
+            if (config.front !== undefined) {
             tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FRONT_DIRNAME, `tsconfig${ASL_EXTENSION_TS}.json`)) });
             tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FRONT_DIRNAME, "tsconfig.mts.json")) });
-    }
-    if (config.flex !== undefined) {
-            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, `tsconfig${ASL_EXTENSION_TS}.json`)) });
-    }
-    await File.writeFile(tsconfigPath, JSON.stringify(tsconfig, null, 2));
-    
-    // Generate config folder which holds all auto-generated configs for each sub-repo
-    const tsconfigDir = info.TsconfigDir;
-    await File.mkdir(tsconfigDir, { recursive: true });
-    
-    // Generate base config if it doesn't exist
-    // This contains optional typescript settings the user can configure
-    const tsconfigBasePath = Path.join(tsconfigDir, "tsconfig.base.json");
-    if (await fileStat(tsconfigBasePath) === undefined) {
-        const tsconfigBase: TsConfig = {
-            compilerOptions: {
-                target: Ts.ScriptTarget[Ts.ScriptTarget.ES2021] as any,
-                strict: true,
-                skipLibCheck: true,
-                esModuleInterop: true,
-                noImplicitAny: true,
-                noImplicitThis: true,
-                strictNullChecks: true,
-                strictFunctionTypes: true,
-                forceConsistentCasingInFileNames: true,
-                removeComments: false,
-                sourceMap: true,
-                inlineSources: true
             }
-        };
+            if (config.flex !== undefined) {
+            tsconfig.references!.push({ path: relPath(info.baseDir, Path.join(info.TsconfigDir, RAPID_FLEX_DIRNAME, `tsconfig${ASL_EXTENSION_TS}.json`)) });
+            }
+            await File.writeFile(tsconfigPath, JSON.stringify(tsconfig, null, 2));
     
-        await File.writeFile(tsconfigBasePath, JSON.stringify(tsconfigBase, null, 2));
+            // Generate config folder which holds all auto-generated configs for each sub-repo
+            const tsconfigDir = info.TsconfigDir;
+            await File.mkdir(tsconfigDir, { recursive: true });
+    
+            // Generate base config if it doesn't exist
+            // This contains optional typescript settings the user can configure
+            const tsconfigBasePath = Path.join(tsconfigDir, "tsconfig.base.json");
+            if (await fileStat(tsconfigBasePath) === undefined) {
+                const tsconfigBase: TsConfig = {
+                    compilerOptions: {
+                        target: Ts.ScriptTarget[Ts.ScriptTarget.ES2021] as any,
+                        strict: true,
+                        skipLibCheck: true,
+                        esModuleInterop: true,
+                        noImplicitAny: true,
+                        noImplicitThis: true,
+                        strictNullChecks: true,
+                        strictFunctionTypes: true,
+                        forceConsistentCasingInFileNames: true,
+                        removeComments: false,
+                        sourceMap: true,
+                        inlineSources: true
+                    }
+                };
+    
+                await File.writeFile(tsconfigBasePath, JSON.stringify(tsconfigBase, null, 2));
+            }
+
+            // Generate repos
+            await Promise.all([
+                generateInternalRepo(tsconfigBasePath, {
+                    name: "flex",
+                    pathOverrideNames: ["flex"],
+                    lib: ["ES2022"],
+                    types: [
+                        Path.join(typeDir, "flex")
+                    ],
+                    pckg: info,
+                    typeDir,
+                    createFolder: config.flex !== undefined,
+                    additionalDependencies: dependencies,
+                    variants: {
+                        [ASL_EXTENSION_TS]: {
+                            browserStyleImports: false,
+                            rapidLib: false,
+                            module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                            types: [
+                                Path.join(typeDir, "asl"),
+                            ],
+                            additionalIncludes: [],
+                            additionalReferences: []
+                        }
+                    }
+                }),
+                generateInternalRepo(tsconfigBasePath, {
+                    name: "back",
+                    pathOverrideNames: ["back", "flex"],
+                    lib: ["ES2022", "DOM"],
+                    types: [
+                        Path.join(typeDir, "node"),
+                    ],
+                    standardLibPaths: {
+                        "typescript": "typescript/typescript.d.ts",
+                        "chokidar": "chokidar/index.d.ts",
+                        "ws": "ws/index.d.ts"
+                    },
+                    pckg: info,
+                    typeDir,
+                    createFolder: config.back !== undefined,
+                    additionalDependencies: dependencies,
+                    variants: {
+                        [ASL_EXTENSION_TS]: {
+                            browserStyleImports: false,
+                            rapidLib: true,
+                            module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                            types: [
+                                Path.join(typeDir, "asl"),
+                            ],
+                            additionalIncludes: [ "flex" ],
+                            additionalReferences: [
+                                { name: "back", variants: [ ".cts", ".mts" ] },
+                                { name: "flex", variants: [ ASL_EXTENSION_TS ] }
+                            ]
+                        },
+                        ".cts": {
+                            browserStyleImports: false,
+                            rapidLib: true,
+                            module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
+                            moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext],
+                            additionalReferences: [],
+                            additionalIncludes: []
+                        },
+                        ".mts": {
+                            browserStyleImports: false,
+                            rapidLib: true,
+                            module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
+                            moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext],
+                            additionalReferences: [],
+                            additionalIncludes: []
+                        }
+                    }
+                }),
+                generateInternalRepo(tsconfigBasePath, {
+                    name: "front",
+                    pathOverrideNames: ["front", "flex"],
+                    pckg: info,
+                    typeDir,
+                    createFolder: config.front !== undefined,
+                    additionalDependencies: dependencies,
+                    variants: {
+                        [ASL_EXTENSION_TS]: {
+                            browserStyleImports: false,
+                            rapidLib: true,
+                            module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                            types: [
+                                Path.join(typeDir, "asl"),
+                            ],
+                            additionalIncludes: [ "flex" ],
+                            additionalReferences: [
+                                { name: "front", variants: [ ".mts" ] },
+                                { name: "flex", variants: [ ASL_EXTENSION_TS ] }
+                            ]
+                        },
+                        ".mts": {
+                            browserStyleImports: true,
+                            rapidLib: true,
+                            module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
+                            additionalReferences: [],
+                            additionalIncludes: []
+                        }
+                    }
+                })
+            ]);
+
+        })();
+
+        initJobs.set(info.configPath, job);
     }
 
-    // Generate repos
-    await Promise.all([
-        generateInternalRepo(tsconfigBasePath, {
-            name: "flex",
-            pathOverrideNames: ["flex"],
-            lib: ["ES2022"],
-            types: [
-                Path.join(typeDir, "flex")
-            ],
-            pckg: info,
-            typeDir,
-            createFolder: config.flex !== undefined,
-            additionalDependencies: dependencies,
-            variants: {
-                [ASL_EXTENSION_TS]: {
-                    browserStyleImports: false,
-                    rapidLib: false,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
-                    types: [
-                        Path.join(typeDir, "asl"),
-                    ],
-                    additionalIncludes: [],
-                    additionalReferences: []
-                }
-            }
-        }),
-        generateInternalRepo(tsconfigBasePath, {
-            name: "back",
-            pathOverrideNames: ["back", "flex"],
-            lib: ["ES2022", "DOM"],
-            types: [
-                Path.join(typeDir, "node"),
-            ],
-            standardLibPaths: {
-                "typescript": "typescript/typescript.d.ts",
-                "chokidar": "chokidar/index.d.ts",
-                "ws": "ws/index.d.ts"
-            },
-            pckg: info,
-            typeDir,
-            createFolder: config.back !== undefined,
-            additionalDependencies: dependencies,
-            variants: {
-                [ASL_EXTENSION_TS]: {
-                    browserStyleImports: false,
-                    rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
-                    types: [
-                        Path.join(typeDir, "asl"),
-                    ],
-                    additionalIncludes: [ "flex" ],
-                    additionalReferences: [
-                        { name: "back", variants: [ ".cts", ".mts" ] },
-                        { name: "flex", variants: [ ASL_EXTENSION_TS ] }
-                    ]
-                },
-                ".cts": {
-                    browserStyleImports: false,
-                    rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
-                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext],
-                    additionalReferences: [],
-                    additionalIncludes: []
-                },
-                ".mts": {
-                    browserStyleImports: false,
-                    rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.NodeNext],
-                    moduleResolution: Ts.ModuleResolutionKind[Ts.ModuleResolutionKind.NodeNext],
-                    additionalReferences: [],
-                    additionalIncludes: []
-                }
-            }
-        }),
-        generateInternalRepo(tsconfigBasePath, {
-            name: "front",
-            pathOverrideNames: ["front", "flex"],
-            pckg: info,
-            typeDir,
-            createFolder: config.front !== undefined,
-            additionalDependencies: dependencies,
-            variants: {
-                [ASL_EXTENSION_TS]: {
-                    browserStyleImports: false,
-                    rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
-                    types: [
-                        Path.join(typeDir, "asl"),
-                    ],
-                    additionalIncludes: [ "flex" ],
-                    additionalReferences: [
-                        { name: "front", variants: [ ".mts" ] },
-                        { name: "flex", variants: [ ASL_EXTENSION_TS ] }
-                    ]
-                },
-                ".mts": {
-                    browserStyleImports: true,
-                    rapidLib: true,
-                    module: Ts.ModuleKind[Ts.ModuleKind.ES2022],
-                    additionalReferences: [],
-                    additionalIncludes: []
-                }
-            }
-        })
-    ]);
+    await job;
+}
+
+/**
+ * Cleans a given package, deleting its build folder.
+ * Options can be provided to delete generated config files as well.
+ * 
+ * @param registry 
+ * @param info 
+ */
+export async function cleanPackage(registry: PackageRegistry, info: PackageInfo, options?: { cleanConfigFiles: boolean }) {
+    File.rm(info.buildDir, { recursive: true, force: true });
+
+    if (options?.cleanConfigFiles) {
+        File.rm(info.TsconfigDir, { recursive: true, force: true });
+    }
 }
 
 /**
@@ -988,7 +1071,7 @@ export class PackageWatchBuilder {
             this.stop(); // Stop builds temporarily while re-initializing package
 
             try {
-                await initPackage(this.registry, PackageInfo.get(configPath), this.typeDir);
+                await initPackage(this.registry, PackageInfo.get(configPath), this.typeDir, { initDependencies: true, forceSelf: true });
             } catch (err) {
                 console.error(err);
             }
@@ -1050,7 +1133,7 @@ export class PackageBuilder {
 
     /** Builds the given package */
     public async build(registry: PackageRegistry, pckgInfo: PackageInfo) {
-        await initPackage(registry, pckgInfo, this.typeDir);
+        await initPackage(registry, pckgInfo, this.typeDir, { initDependencies: true, forceSelf: true });
 
         this.ASLTranspilationResults = [];
         this.ASLObjects.clear();
