@@ -8,7 +8,7 @@ import { pipeline } from "stream/promises";
 import Ts, { MapLike } from "typescript";
 import { WebSocketServer } from "ws";
 import { ASL_CONFIG, ASL_EXTENSION_JS, ASLEnvironment, ASLExecutionResult, ASLExports, ASLModuleId, ASLModuleInfo, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
-import { PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
+import { cleanPackage, PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 import { Router } from "./Router.cjs";
 
 /** Probes the file system to determine if it is case sensitive or not */
@@ -421,6 +421,40 @@ export class RapidRuntime {
 
             if (events.length > 0) this.broadcast("hotReload", events);
         };
+    }
+
+    /**
+     * Cleans all packages
+     */
+    public async cleanAll() {
+        const jobs: Promise<void>[] = [];
+        for (const directory of this.packageRegistry.directories) {
+            for (const entry of await File.readdir(directory, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+
+                jobs.push(this.packageRegistry.findPckg(entry.name).then(info => {
+                    if (info) return cleanPackage(this.packageRegistry, info, { cleanConfigFiles: true });
+                }));
+            }
+        }
+        await Promise.all(jobs);
+    }
+
+    /**
+     * Builds all packages
+     */
+    public async buildAll() {
+        const jobs: Promise<void>[] = [];
+        for (const directory of this.packageRegistry.directories) {
+            for (const entry of await File.readdir(directory, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+
+                jobs.push(this.packageRegistry.findPckg(entry.name).then(info => {
+                    if (info) return this.packageBuilder.build(this.packageRegistry, info);
+                }));
+            }
+        }
+        await Promise.all(jobs);
     }
 
     /**

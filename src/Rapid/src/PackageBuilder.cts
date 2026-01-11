@@ -97,7 +97,7 @@ const RAPID_FRONT_DIRNAME = "front";
  * a single interface.
  */
 export class PackageRegistry {
-    private readonly directories: string[];
+    public readonly directories: string[];
 
     constructor(directories: string[]) {
         this.directories = directories;
