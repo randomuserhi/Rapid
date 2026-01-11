@@ -201,7 +201,7 @@ export class RapidApp {
     public pckgInfo: PackageInfo;
 
     /** Routes that are used to resolve certain URL paths */
-    public readonly httpRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown]>>();
+    public readonly httpRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, res: Http.ServerResponse, url: URL, next: unknown]>>();
 
     /** Routes that are used for upgrading websocket connections */
     public readonly wsRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown]>>();
@@ -252,14 +252,14 @@ export class RapidApp {
     }
 
     /** Handle requests for the given App */
-    public async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse) {
+    public async onRequest(req: Http.IncomingMessage, res: Http.ServerResponse, url: URL) {
         let resourcePath: string | undefined = undefined;
 
         try {
             // Trigger any handlers
             const router = this.httpRoutes.get(req.method! as RestMethod);
             if (router !== undefined) {
-                const result = await router.match(req.url!, req, res, Router.NEXT);
+                const result = await router.match(req.url!, req, res, url, Router.NEXT);
                 if (result !== Router.NO_MATCH && result !== Router.NEXT) return;
             }
     
@@ -687,7 +687,7 @@ export class RapidRuntime {
                 res.end("Not valid URL");
                 return;
             }
-        
+
             let pckgName = decodeURI(req.url!.slice(pckgNameLocation.start, pckgNameLocation.end));
             const pckgUrl = req.url!.slice(pckgNameLocation.end);
 
@@ -759,8 +759,9 @@ export class RapidRuntime {
             await this.loadEntry(app);
     
             // Pass request onto the given package
+            const url = new URL(req.url!, "https://localhost.rapid/");
             req.url = pckgUrl;
-            app.onRequest(req, res);
+            app.onRequest(req, res, url);
         } catch (err) {
             res.statusCode = 500;
             res.end("Internal Server Error");

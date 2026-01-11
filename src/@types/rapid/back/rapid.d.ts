@@ -37,14 +37,14 @@ declare module "rapid" {
          * @param url 
          * @param callback 
          */
-        export function route(method: RestMethod, url: string, callback: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void): (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void;
+        export function route(method: RestMethod, url: string, callback: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, url: URL, next: unknown) => void): (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, url: URL, next: unknown) => void;
 
         /**
          * 
          * @param method 
          * @param cb 
          */
-        export function remove(method: RestMethod, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, next: unknown) => void): boolean;
+        export function remove(method: RestMethod, cb: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, url: URL, next: unknown) => void): boolean;
     }
 
     /**

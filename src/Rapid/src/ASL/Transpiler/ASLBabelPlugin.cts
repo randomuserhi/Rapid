@@ -136,8 +136,7 @@ export default function (babel: Babel): PluginObj {
                         if (t.isImport(path.node.callee)) {
                             const node = t.callExpression(t.identifier(ASL_REQUIRE_KEYWORD), path.node.arguments);
                             node.loc = path.node.loc;
-                            path.insertBefore(node);
-                            nodeRemoveJobs.push(() => path.remove());
+                            path.replaceWith(node);
                         }
                     },
                 });
