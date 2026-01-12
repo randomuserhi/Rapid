@@ -433,7 +433,10 @@ export class RapidRuntime {
                 if (!entry.isDirectory()) continue;
 
                 jobs.push(this.packageRegistry.findPckg(entry.name).then(info => {
-                    if (info) return cleanPackage(this.packageRegistry, info, { cleanConfigFiles: true });
+                    if (info) {
+                        cleanPackage(this.packageRegistry, info, { cleanConfigFiles: true });
+                    }
+                    console.log(`Cleaned ${entry.name}`);
                 }));
             }
         }
@@ -450,7 +453,10 @@ export class RapidRuntime {
                 if (!entry.isDirectory()) continue;
 
                 jobs.push(this.packageRegistry.findPckg(entry.name).then(info => {
-                    if (info) return this.packageBuilder.build(this.packageRegistry, info);
+                    if (info) {
+                        this.packageBuilder.build(this.packageRegistry, info);
+                    }
+                    console.log(`Built ${entry.name}`);
                 }));
             }
         }
