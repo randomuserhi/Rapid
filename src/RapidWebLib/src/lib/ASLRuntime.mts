@@ -900,6 +900,13 @@ export class ASLModuleRuntime {
 
         readonly exports: ASLExports;
 
+        /** 
+         * Tokens used to ensure abort callbacks are only added once. 
+         * The token remains valid as long as something has a strong reference to it
+         * apart from the runtime itself.
+         */
+        readonly abortTokens: WeakMap<any, undefined>;
+
         /** Abort controller to handle module destruction */
         readonly abort: AbortController;
 
@@ -936,6 +943,7 @@ export class ASLModuleRuntime {
         this.__internal = {
             contextRef,
             exports: {},
+            abortTokens: new WeakMap(),
             abort: new AbortController(),
             resolve: undefined!
         };
@@ -943,8 +951,20 @@ export class ASLModuleRuntime {
         this.signal = this.__internal.abort.signal;
     }
     
-    /** Trigger callbacks when module is destructed */
-    public onAbort(cb: () => void) {
+    /** 
+     * Trigger callbacks when module is destructed
+     *  
+     * @param token A token can be provided which controls whether the callback is added or not.
+     *              Once a token has been used, subsequent callbacks using the same token will not be added.
+     *              The token remains valid until it is Garbage Collected. The runtime itself holds a weak ref
+     *              to the token.
+     */
+    public onAbort<T extends object>(cb: () => void, token?: T): void {
+        if (token !== null && token !== undefined) {
+            if (this.__internal.abortTokens.has(token)) return;
+            this.__internal.abortTokens.set(token, undefined);
+        }
+
         if (!this.signal.aborted) this.signal.addEventListener("abort", cb);
         else cb();
     }

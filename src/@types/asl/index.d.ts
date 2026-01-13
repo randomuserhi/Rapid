@@ -88,11 +88,16 @@ declare global {
          */
         require: ASLImportFunc;
 
-        /**
-         * Adds a callback that executes when the module is destructed
-         * @param cb Callback to run
+        /** 
+         * Trigger callbacks when module is destructed 
+         * 
+         * @param cb The callback to run
+         * @param token A token can be provided which controls whether the callback is added or not.
+         *              Once a token has been used, subsequent callbacks using the same token will not be added.
+         *              The token remains valid until it is Garbage Collected. The runtime itself holds a weak ref
+         *              to the token.
          */
-        onAbort(cb: () => void): void;
+        onAbort<T extends object>(cb: () => void, token?: T): void;
 
         /**
          * Abort signal that triggers when module is destructed
