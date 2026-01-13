@@ -262,12 +262,15 @@ export class RapidApp {
                 const result = await router.match(req.url!, req, res, url, Router.NEXT);
                 if (result !== Router.NO_MATCH && result !== Router.NEXT) return;
             }
-    
+
+            // Decode URL to get file path
+            const decodedURL = decodeURI(req.url!);
+
             // Locate package resource
             if (req.url !== "/") {
                 // Look for resource through static path list
                 for (const prefix of this.staticFrontPaths) {
-                    resourcePath = Path.join(prefix, req.url!);
+                    resourcePath = Path.join(prefix, decodedURL);
 
                     if (await fileExists(resourcePath)) {
                         await serveResource(resourcePath, res);
@@ -280,7 +283,7 @@ export class RapidApp {
             const config = await this.pckgInfo.config(this.runtime.isWatching(this.pckgInfo));
             if (config.front?.paths !== undefined) {
                 const paths = config.front.paths;
-                const match = filePrefixMatch(req.url!, paths);
+                const match = filePrefixMatch(decodedURL, paths);
                 if (match !== undefined) {
                     for (const path of paths[match.pattern]) {
                         if (Path.basename(path) === "*") {
@@ -300,7 +303,7 @@ export class RapidApp {
             // If front doesnt have it, check flex
             if (config.flex?.paths !== undefined) {
                 const paths = config.flex.paths;
-                const match = filePrefixMatch(req.url!, paths);
+                const match = filePrefixMatch(decodedURL, paths);
                 if (match !== undefined) {
                     for (const path of paths[match.pattern]) {
                         if (Path.basename(path) === "*") {
