@@ -43,8 +43,8 @@ try {
 
     console.log("\nGenerate Registry Types...");
 
-    //const typesFolder = "E:\\Git\\RapidRegistry\\lib";
-    const typesFolder = "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\lib";
+    const typesFolder = "E:\\Git\\RapidRegistry\\lib";
+    //const typesFolder = "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\lib";
     await rm(typesFolder, { recursive: true, force: true });
 
     await mkdir(typesFolder);
@@ -53,6 +53,7 @@ try {
     await mkdir(path.join(typesFolder, "node"));
     await cp("./node_modules/@types/node", path.join(typesFolder, "node"), { recursive: true });
     await cp("./node_modules/@types/ws", path.join(typesFolder, "ws"), { recursive: true });
+    await cp("./node_modules/@types/better-sqlite3", path.join(typesFolder, "better-sqlite3"), { recursive: true });
 
     console.log("\nBuild complete!");
 } catch (e) {

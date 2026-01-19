@@ -22,6 +22,10 @@
     "@babel/core": "^7.28.4",
     "@babel/preset-env": "^7.28.3",
     "@babel/template": "^7.27.2",
+    "@types/node": "^24.9.1",
+    "@types/ws": "^8.18.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.6.2",
     "chokidar": "^4.0.3",
     "typescript": "^5.9.3",
     "ws": "^8.18.3"
@@ -29,8 +33,6 @@
   "devDependencies": {
     "@types/babel__core": "^7.20.5",
     "@types/babel__template": "^7.4.4",
-    "@types/node": "^24.9.1",
-    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
     "eslint": "^9.39.1",
