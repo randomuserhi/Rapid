@@ -2,6 +2,7 @@ import { bind } from "../ArrowBind.cjs";
 import { RapidApp } from "../RapidRuntime.cjs";
 
 export { bind } from "../ArrowBind.cjs";
+export { onProcessExit } from "../ExitHandler.cjs";
 export type { RapidApp } from "../RapidRuntime.cjs";
 
 import FileSync from "fs";

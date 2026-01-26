@@ -58,4 +58,12 @@ declare module "rapid" {
      * @param args Arguments to bind to the parameters of the function.
      */
     export function bind<A extends any[], B extends any[], R>(func: (...args: [...A, ...B]) => R, ...args: A): (...args: B) => R;
+
+    /**
+     * Calls a given callback when process terminates
+     * 
+     * @param cb 
+     * @param options 
+     */
+    export function onProcessExit(cb: () => void, options?: { signal?: AbortSignal });
 }

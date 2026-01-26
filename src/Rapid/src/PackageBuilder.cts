@@ -6,6 +6,7 @@ import Path from "path";
 import Ts, { MapLike } from "typescript";
 import { ASL_EXTENSION_JS, ASL_EXTENSION_JS_MAP, ASL_EXTENSION_TS, ASLPath } from "./ASL/ASLRuntime.cjs";
 import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
+import { onProcessExit } from "./ExitHandler.cjs";
 import { Result } from "./PromiseResult.cjs";
 
 /** Helper method to get file information. Returns undefined if file does not exist. */
@@ -1016,31 +1017,8 @@ export class PackageWatchBuilder {
         this.watchHost.writeFile = tsWriteFileOverride.bind(this as any, origWriteFile);
 
         // Cleanup watchers properly on program end
-
-        const cleanup = () => {
+        onProcessExit(() => {
             this.stop();
-        };
-
-        process.on('SIGINT', () => {
-            cleanup();
-        });
-
-        process.on('SIGTERM', () => {
-            cleanup();
-        });
-
-        // Catch normal process exit
-        process.on('exit', () => {
-            cleanup();
-        });
-
-        // Catch unexpected errors (prevent crash without cleanup)
-        process.on('uncaughtException', () => {
-            cleanup();
-        });
-
-        process.on('unhandledRejection', () => {
-            cleanup();
         });
     }
 

@@ -8,20 +8,3 @@ const app = new RapidRuntime(["E:\\Git\\RapidRegistry\\packages", "E:\\Git\\Rapi
 app.listen(PORT).then(() => {
     console.log(`Server running at http://localhost:${PORT}/`);
 });
-
-// NOTE(randomuserhi): Required to properly handle program exit
-process.on('SIGINT', () => {
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    process.exit(0);
-});
-
-process.on('uncaughtException', () => {
-    process.exit(1);
-});
-
-process.on('unhandledRejection', () => {
-    process.exit(1);
-});
