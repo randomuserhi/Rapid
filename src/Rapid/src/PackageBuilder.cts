@@ -1023,12 +1023,10 @@ export class PackageWatchBuilder {
 
         process.on('SIGINT', () => {
             cleanup();
-            process.exit(0); // Exit gracefully
         });
 
         process.on('SIGTERM', () => {
             cleanup();
-            process.exit(0);
         });
 
         // Catch normal process exit
@@ -1039,12 +1037,10 @@ export class PackageWatchBuilder {
         // Catch unexpected errors (prevent crash without cleanup)
         process.on('uncaughtException', () => {
             cleanup();
-            process.exit(1);
         });
 
         process.on('unhandledRejection', () => {
             cleanup();
-            process.exit(1);
         });
     }
 
