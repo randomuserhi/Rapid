@@ -6,8 +6,10 @@ export { onProcessExit } from "../ExitHandler.cjs";
 export type { RapidApp } from "../RapidRuntime.cjs";
 
 import FileSync from "fs";
+import File from "fs/promises";
 import Http from "http";
 import Path from "path";
+import type Stream from "stream";
 import { pipeline } from "stream/promises";
 import type { ASLModuleRuntime } from "../ASL/ASLRuntime.cjs";
 import { PatternMatch, Router } from "../Router.cjs";
@@ -34,24 +36,34 @@ const mimeTypes = {
 } as const;
 
 async function serve(path: string, res: Http.ServerResponse) {
+    try {
+        const stats = await File.stat(path);
+        if (stats.isDirectory()) {
+            res.statusCode = 500;
+            res.end("Is Directory");
+            return;
+        }
+    } catch (err: any) {
+        switch(err?.code) {
+        case "ENOENT": {
+            res.statusCode = 404;
+            res.end("File not found");
+            return;
+        }
+        default: throw err;
+        }
+    }
+
     const extname: keyof typeof mimeTypes = Path.extname(path).toLowerCase() as any;
     const contentType = mimeTypes[extname] || 'application/octet-stream';
     
     res.writeHead(200, { 'Content-Type': contentType });
-    
+
     try {
         const stream = FileSync.createReadStream(path);
         await pipeline(stream, res);
     } catch(err: any) {
         switch(err?.code) {
-        case "ENOENT": {
-            res.statusCode = 404;
-            res.end("Not Found");
-        } break;
-        case "EISDIR": {
-            res.statusCode = 500;
-            res.end("EISDIR");
-        } break;
         case "ERR_STREAM_PREMATURE_CLOSE": break;
         default: throw err;
         }
@@ -83,6 +95,15 @@ function remove(app: RapidApp, method: RestMethod, cb: (match: PatternMatch, req
     return router.remove(cb);
 }
 
+function upgrade(app: RapidApp, runtime: ASLModuleRuntime, path: string, cb: (match: PatternMatch, req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown) => void) {
+    app.wsRoutes.add(path, cb);
+
+    // Auto clear route when module is destructed
+    runtime.onAbort(() => app.wsRoutes.remove(cb));
+
+    return cb;
+}
+
 // ASL import hook for module runtime 
 function __linkASLRuntime(app: RapidApp, appExports: any, runtime: ASLModuleRuntime, exports: any) {
     return {
@@ -90,6 +111,7 @@ function __linkASLRuntime(app: RapidApp, appExports: any, runtime: ASLModuleRunt
         app: {
             serve,
             route: bind(route, app, runtime),
+            upgrade: bind(upgrade, app, runtime),
             ...appExports
         }
     };

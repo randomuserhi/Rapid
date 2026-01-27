@@ -1129,11 +1129,11 @@ class ASLArchetypeGraph {
         detached.add(mid);
 
         const arch = this.moduleArchetype.get(mid);
-        if (arch === undefined) return;
-
-        // Remove from its own archetype
-        this.moduleArchetype.delete(mid);
-        arch.modules.delete(mid);
+        if (arch !== undefined) {
+            // Remove from its own archetype
+            this.moduleArchetype.delete(mid);
+            arch.modules.delete(mid);
+        }
 
         // Find all modules dependent on this one
         const dependentArchetypes = this.dependentArchetypeMap.get(mid);

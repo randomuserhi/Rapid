@@ -40,6 +40,14 @@ declare module "rapid" {
         export function route(method: RestMethod, url: string, callback: (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, url: URL, next: unknown) => void): (match: PatternMatch, req: Http.IncomingMessage, res: Http.ServerResponse, url: URL, next: unknown) => void;
 
         /**
+         * Create an upgrade route for the current app.
+         * 
+         * @param url 
+         * @param callback 
+         */
+        export function upgrade(url: string, cb: (match: PatternMatch, req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown) => void): (match: PatternMatch, req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown) => void;
+
+        /**
          * 
          * @param method 
          * @param cb 

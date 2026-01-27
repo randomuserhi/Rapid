@@ -204,7 +204,7 @@ export class RapidApp {
     public readonly httpRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, res: Http.ServerResponse, url: URL, next: unknown]>>();
 
     /** Routes that are used for upgrading websocket connections */
-    public readonly wsRoutes = new Map<RestMethod, Router<[req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown]>>();
+    public readonly wsRoutes = new Router<[req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>, next: unknown]>();
 
     /** RapidLib object */
     public rapidLib: RapidLib;
@@ -236,11 +236,8 @@ export class RapidApp {
     public async onUpgrade(req: Http.IncomingMessage, socket: Stream.Duplex, head: Buffer<ArrayBuffer>) {
         try {
             // Trigger any handlers
-            const router = this.wsRoutes.get(req.method! as RestMethod);
-            if (router !== undefined) {
-                const result = await router.match(req.url!, req, socket, head, Router.NEXT);
-                if (result !== Router.NO_MATCH && result !== Router.NEXT) return;
-            }
+            const result = await this.wsRoutes.match(req.url!, req, socket, head, Router.NEXT);
+            if (result !== Router.NO_MATCH && result !== Router.NEXT) return;
 
             // TODO(randomuserhi): Write HTTP header for rejection (e.g code 404 etc...)
             socket.destroy();
