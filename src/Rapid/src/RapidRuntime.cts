@@ -182,9 +182,9 @@ async function serveResource(path: string, res: Http.ServerResponse) {
     const extname: keyof typeof mimeTypes = Path.extname(path).toLowerCase() as any;
     const contentType = mimeTypes[extname] || 'application/octet-stream';
 
-    res.writeHead(200, { 'Content-Type': contentType });
-
     const stream = FileSync.createReadStream(path);
+    
+    res.writeHead(200, { 'Content-Type': contentType });
     await pipeline(stream, res);
 }
 

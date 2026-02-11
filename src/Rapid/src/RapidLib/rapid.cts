@@ -57,10 +57,13 @@ async function serve(path: string, res: Http.ServerResponse) {
     const extname: keyof typeof mimeTypes = Path.extname(path).toLowerCase() as any;
     const contentType = mimeTypes[extname] || 'application/octet-stream';
     
-    res.writeHead(200, { 'Content-Type': contentType });
-
+    const stream = FileSync.createReadStream(path);
+    
+    res.statusCode = 200;
+    res.setHeader("Content-Type", contentType);
+    // res.flushHeaders();
+    
     try {
-        const stream = FileSync.createReadStream(path);
         await pipeline(stream, res);
     } catch(err: any) {
         switch(err?.code) {
