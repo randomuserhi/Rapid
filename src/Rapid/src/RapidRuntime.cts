@@ -489,7 +489,12 @@ export class RapidRuntime {
             app.entryPoint = this.environment.fetch(entry);
             
             // Wait for execution to complete
-            await app.entryPoint;
+            try {
+                await app.entryPoint;
+            } catch(err) {
+                console.error(`Failed to launch entrypoint for '${app.pckgInfo.name}': `, err);
+                app.entryPoint = undefined;
+            } 
         }
     }
 
