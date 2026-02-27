@@ -392,6 +392,12 @@ async function generateInternalRepo(
 
     const writeJobs: Promise<void>[] = [];
     
+    if (types !== undefined) {
+        for (let i = 0; i < types.length; ++i) {
+            types[i] = relPath(tsConfigDir, types[i]);
+        }
+    }
+
     // base build config for supported variants to extend
     const baseTsConfigPath = Path.join(tsConfigDir, `tsconfig.${name}.json`);
     {
