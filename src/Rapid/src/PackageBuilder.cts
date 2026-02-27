@@ -392,6 +392,8 @@ async function generateInternalRepo(
 
     const writeJobs: Promise<void>[] = [];
     
+
+    // make type paths relative
     if (types !== undefined) {
         for (let i = 0; i < types.length; ++i) {
             types[i] = relPath(tsConfigDir, types[i]);
@@ -429,6 +431,13 @@ async function generateInternalRepo(
             additionalReferences,
             types: variantTypes
         } = variants[variant];
+
+        // make variant type paths relative
+        if (variantTypes !== undefined) {
+            for (let i = 0; i < variantTypes.length; ++i) {
+                variantTypes[i] = relPath(tsConfigDir, variantTypes[i]);
+            }
+        }
 
         // add self to includes
         const includes = [name, ...additionalIncludes];
