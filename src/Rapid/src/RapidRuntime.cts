@@ -364,6 +364,11 @@ export class RapidRuntime {
      * @param typeDir 
      */
     public constructor(directories: string[], typeDir: string) {
+        // Resolve directory paths
+        for (let i = 0; i < directories.length; ++i) {
+            directories[i] = Path.resolve(directories[i]);
+        }
+
         this.packageRegistry = new PackageRegistry(directories);
         this.packageWatchBuilder = new PackageWatchBuilder(this.packageRegistry, typeDir);
         this.packageBuilder = new PackageBuilder(typeDir);
