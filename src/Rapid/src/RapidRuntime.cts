@@ -180,11 +180,11 @@ class RapidLib {
 /** TODO(randomuserhi): Move into some http helper script */
 async function serveResource(path: string, res: Http.ServerResponse) {
     const extname: keyof typeof mimeTypes = Path.extname(path).toLowerCase() as any;
-    const contentType = mimeTypes[extname] || 'application/octet-stream';
+    const contentType = mimeTypes[extname] || "application/octet-stream";
 
     const stream = FileSync.createReadStream(path);
     
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, { "Content-Type": contentType });
     await pipeline(stream, res);
 }
 
@@ -749,7 +749,12 @@ export class RapidRuntime {
 
             // Special case for root of standard library
             if (pckgName === "rapid.mjs" && pckgUrl === "") {
-                rapidLibResource = Path.join(__dirname, "RapidWebLib", "rapid.mjs");
+                const stream = FileSync.createReadStream(Path.join(__dirname, "RapidWebLib", "rapid.mjs"));
+                res.writeHead(200, { "Content-Type": "text/javascript" });
+                // Insert ASL_CONFIG (saves on a get request)
+                res.write(`{ const { ASL_CONFIG } = await import("/rapid/ASLRuntime.mjs"); ASL_CONFIG.isCaseSensitive = ${ASL_CONFIG.isCaseSensitive}; }\n`);
+                await pipeline(stream, res);
+                return;
             } else {
                 if (pckgUrl === "") {
                     // Redirect "localhost:3000/pckg" links to "localhost:3000/pckg/" otherwise relative imports fail:

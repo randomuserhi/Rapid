@@ -47,11 +47,6 @@ export function __linkRapidApp(app: App, exports: any) {
 
 ASL_CONFIG.baseURL = new URL(window.location.origin);
 
-// TODO(randomuserhi): Fetch request from backend whether it is case sensitive or not via a Get Request
-//                     This must be awaited on as we cannot continue until we know if paths are case
-//                     sensitive or not to prevent malforming the registry.
-ASL_CONFIG.isCaseSensitive = false;
-
 // Load config and trigger entry point as required
 
 interface RapidConfig {
@@ -139,19 +134,34 @@ if (rapid !== undefined) {
         });
 
         // Try connecting to socket - need a reconnect ability if socket closes
-        const ws = new WebSocket(`ws://${window.location.host}/rapid`);
-        ws.onmessage = (ev => {
-            const data: {
-                pckg: string,
-                route: string,
-                body: any
-            } = JSON.parse(ev.data);
+        let ws: WebSocket;
+        const close = () => {
+            console.log("Connection to rapid lost.");
+            setTimeout(connect, 500);
+        };
+        const connect = () => {
+            if (ws && (ws.readyState === ws.CONNECTING || ws.readyState === ws.OPEN)) return;
+            console.log("Attempting to connect to rapid.");
+            ws = new WebSocket(`ws://${window.location.host}/rapid`);
+            ws.addEventListener("open", ev => {
+                console.log("Connected to rapid.");
+            });
+            ws.addEventListener("message", ev => {
+                const data: {
+                    pckg: string,
+                    route: string,
+                    body: any
+                } = JSON.parse(ev.data);
 
-            // Ignore messages that are not from rapid package
-            if (data.pckg !== "rapid") return;
+                // Ignore messages that are not from rapid package
+                if (data.pckg !== "rapid") return;
 
-            // Trigger router callbacks
-            router.match(data.route, data.body);
-        });
+                // Trigger router callbacks
+                router.match(data.route, data.body);
+            });
+            ws.addEventListener("close", close);
+            ws.addEventListener("error", close);
+        };
+        connect();
     }
 }
