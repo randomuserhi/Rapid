@@ -125,12 +125,8 @@ if (rapid !== undefined) {
             }
             registry.invalidate(paths);
 
-            // NOTE(randomuserhi): This relies on package file path routing
-            //                     To get custom routing to work, asl file fetches need to map URL -> Path on disk
-            //                     This way when hot reload event comes in for a Path on disk, all associated URLs can also
-            //                     be invalidated
-            // TODO(randomuserhi): Change web invalidation to be handled using Path on disk, and associate URLs with said paths
-            //                     as described above
+            // NOTE(randomuserhi): This relies on the default package file path routing.
+            // TODO(randomuserhi): Add an API to fix hot reloading for custom URLs
         });
 
         // Try connecting to socket - need a reconnect ability if socket closes
