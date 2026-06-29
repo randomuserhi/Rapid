@@ -368,6 +368,7 @@ export class RapidRuntime {
         // Resolve directory paths
         for (let i = 0; i < directories.length; ++i) {
             directories[i] = Path.resolve(directories[i]);
+            console.log(`${chalk.grey("[Runtime]")} Loaded '${directories[i]}'.`);
         }
 
         this.packageRegistry = new PackageRegistry(directories);
