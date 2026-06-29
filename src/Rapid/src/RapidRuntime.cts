@@ -427,7 +427,7 @@ export class RapidRuntime {
                 // Remove .build/flex or .build/front part from path
                 parts.splice(1, 2); 
                 const route = "/" + parts.join("/");
-
+                
                 events.push({ route });
             }
 
