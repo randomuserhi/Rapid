@@ -1,4 +1,5 @@
 build/
+dist/
 scripts/build/
 node_modules/
 .vscode/

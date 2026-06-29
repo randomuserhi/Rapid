@@ -12,6 +12,8 @@ interface PatternMatch {
 }
 
 declare module "rapid" {
+    export const runtime: any;
+
     /** 
      * Backend main application.
      */

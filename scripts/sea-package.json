@@ -1,0 +1,27 @@
+{
+  "name": "rapid",
+  "version": "1.0.0",
+  "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/randomuserhi/Rapid.git"
+  },
+  "author": "randomuserhi",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/randomuserhi/Rapid/issues"
+  },
+  "homepage": "https://github.com/randomuserhi/Rapid#readme",
+  "dependencies": {
+    "@babel/core": "^7.28.4",
+    "@babel/preset-env": "^7.28.3",
+    "@babel/template": "^7.27.2",
+    "better-sqlite3": "^12.6.2",
+    "chalk": "^5.6.2",
+    "chokidar": "^4.0.3",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.3",
+    "ws": "^8.18.3",
+    "yargs": "^18.0.0"
+  }
+}

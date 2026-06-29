@@ -8,6 +8,7 @@ import { ASL_EXTENSION_JS, ASL_EXTENSION_JS_MAP, ASL_EXTENSION_TS, ASLPath } fro
 import ASLBabelConfig from "./ASL/Transpiler/ASLBabel.config.cjs";
 import { onProcessExit } from "./ExitHandler.cjs";
 import { Result } from "./PromiseResult.cjs";
+import chalk from "chalk";
 
 /** Helper method to get file information. Returns undefined if file does not exist. */
 async function fileStat(path: string) {
@@ -551,13 +552,6 @@ async function generateInternalRepo(
     await Promise.all(writeJobs);
 }
 
-/**
- * Map of package initialization jobs to prevent 2 of the same jobs running at the same time.
- * The key is the path to the config file being initialized. 
- * It should be the resolved full path.
- */
-const initJobs = new Map<string, Promise<void>>();
-
 interface InitPackageOptions {
     /** Initialize dependencies as well */
     initDependencies: boolean;
@@ -567,6 +561,9 @@ interface InitPackageOptions {
 
     /** Only forces initialization on self, not its dependencies */
     forceSelf: boolean;
+
+    /** Map used to track ongoing initialization jobs, prevents triggering multiple package initializations when parsing dependencies */
+    initJobs?: Map<string, Promise<void>>;
 }
 
 /**
@@ -593,6 +590,11 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
             }
         }
     }
+
+    if (parsedOptions.initJobs === undefined) {
+        parsedOptions.initJobs = new Map();
+    }
+    const initJobs = parsedOptions.initJobs;
     
     let job = initJobs.get(info.configPath);
     if (job === undefined) {
@@ -635,7 +637,8 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                 jobs.push(initPackage(registry, dependency, typeDir, { 
                     initDependencies: true,
                     force: parsedOptions.force,
-                    forceSelf: false
+                    forceSelf: false,
+                    initJobs
                 }));
             }
     
@@ -1042,8 +1045,10 @@ export class PackageWatchBuilder {
      * 
      * @param packages List of packages to watch
      */
-    public start(packages: PackageInfo[]) {
-        this.watchList = packages;
+    public start(packages?: PackageInfo[]) {
+        if (packages !== undefined) {
+            this.watchList = packages;
+        }
 
         // Stop current builder if needed
         if (this.builder !== undefined) this.stop();
@@ -1063,7 +1068,7 @@ export class PackageWatchBuilder {
             try {
                 await initPackage(this.registry, PackageInfo.get(configPath), this.typeDir, { initDependencies: true, forceSelf: true });
             } catch (err) {
-                console.error(err);
+                console.error(`${chalk.grey("[PackageBuilder]")} ${chalk.red(`${err}`)}`);
             }
 
             this.start(this.watchList); // Start builds again
@@ -1121,14 +1126,31 @@ export class PackageBuilder {
         this.host.writeFile = tsWriteFileOverride.bind(this as any, origWriteFile);
     }
 
+    /** Callback triggered when all files are built, provides a list of ASL scripts that were transpiled for this build */
+    public onBuild: ((ASLFiles: string[]) => void) | undefined;
+
     /** Builds the given package */
     public async build(registry: PackageRegistry, pckgInfo: PackageInfo) {
-        await initPackage(registry, pckgInfo, this.typeDir, { initDependencies: true, forceSelf: true });
+        await this.init(registry, pckgInfo, { initDependencies: true, forceSelf: true });
 
         this.ASLTranspilationResults = [];
         this.ASLObjects.clear();
 
         const builder = Ts.createSolutionBuilder(this.host, [pckgInfo.baseDir], {});
         builder.build();
+
+        // Collect successful ASL transpilations
+        const paths: string[] = [];
+        for (const result of this.ASLTranspilationResults) {
+            if (result.ok()) paths.push(result.item);
+        }
+
+        // Trigger callback on successfully ASL transpiled files
+        this.onBuild?.(paths);
+    }
+
+    /** Initialize a package */
+    public async init(registry: PackageRegistry, pckgInfo: PackageInfo, options?: Partial<InitPackageOptions>) {
+        await initPackage(registry, pckgInfo, this.typeDir, options);
     }
 }

@@ -1,10 +1,8 @@
 import { spawn } from "child_process";
 import { cp, mkdir, rm } from 'fs/promises';
 import path from "path";
-
-console.log(process.argv);
-
-const root = path.resolve(process.cwd());
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
 
 // TODO(randomuserhi): Relies on user having node, in path -> should avoid this
 //                     They should only need Node runtime
@@ -22,6 +20,31 @@ function tsc(args: string[], name: string) {
             code === 0 ? resolve() : reject(new Error(`${name} exited with ${code}`))
         );
     });
+}
+
+function run(cmd: string, args: string[], name: string) {
+    return new Promise<void>((resolve, reject) => {
+        console.log(`\n${name}...`);
+        const p = spawn(cmd, args, { stdio: "inherit" });
+
+        p.on("error", reject);
+        p.on("exit", code =>
+            code === 0 ? resolve() : reject(new Error(`${name} exited with ${code}`))
+        );
+    });
+}
+
+async function buildSEA() {
+    console.log("\nGenerating SEA exec...");
+
+    await run("node", [
+        "--build-sea",
+        "./scripts/sea-config.json"
+    ], "SEA config");
+
+    await cp("./scripts/sea-package.json", "./dist/package.json");
+
+    // TODO(randomuserhi): Run npm install on dist
 }
 
 try {
@@ -43,8 +66,7 @@ try {
 
     console.log("\nGenerate Registry Types...");
 
-    const typesFolder = "E:\\Git\\RapidRegistry\\rapid_modules";
-    // const typesFolder = "C:\\Users\\User\\Documents\\Git\\RapidRegistry\\rapid_modules";
+    const typesFolder = "./build/lib";
     await rm(typesFolder, { recursive: true, force: true });
 
     await mkdir(typesFolder);
@@ -55,9 +77,22 @@ try {
     await cp("./node_modules/@types/ws", path.join(typesFolder, "ws"), { recursive: true });
     await cp("./node_modules/@types/better-sqlite3", path.join(typesFolder, "better-sqlite3"), { recursive: true });
 
+    // console.log("\nPreparing SEA dist...");
+    // await mkdir("./dist", { recursive: true });
+    // await rm("./dist/lib", { recursive: true, force: true });
+    // await rm("./dist/Rapid", { recursive: true, force: true });
+    // await rm("./dist/rapid.exe", { force: true });
+
+    // // NOTE(randomuserhi): requires Node v26+
+    // await buildSEA();
+    
+    // await cp(typesFolder, "./dist/lib", { recursive: true });
+    // await cp("./build/Rapid", "./dist/Rapid", { recursive: true });
+
     console.log("\nBuild complete!");
 } catch (e) {
     console.error(`\nBuild failed: ${e}`);
-} finally {
     process.exit(1);
 }
+
+process.exit(0);

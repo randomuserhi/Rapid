@@ -1,0 +1,4 @@
+{
+  "main": "./scripts/runtime.cjs",
+  "output": "./dist/rapid.exe"
+}

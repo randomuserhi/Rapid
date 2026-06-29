@@ -13,6 +13,7 @@ import type Stream from "stream";
 import { pipeline } from "stream/promises";
 import type { ASLModuleRuntime } from "../ASL/ASLRuntime.cjs";
 import { PatternMatch, Router } from "../Router.cjs";
+export { runtime } from "../App.cjs";
 
 /** TODO(randomuserhi): Move to some http utility module */
 type RestMethod = "GET" | "POST";

@@ -10,6 +10,7 @@ import { WebSocketServer } from "ws";
 import { ASL_CONFIG, ASL_EXTENSION_JS, ASLEnvironment, ASLExecutionResult, ASLExports, ASLModuleId, ASLModuleInfo, ASLPath, registry } from "./ASL/ASLRuntime.cjs";
 import { cleanPackage, PackageBuilder, PackageInfo, PackageRegistry, PackageWatchBuilder } from "./PackageBuilder.cjs";
 import { Router } from "./Router.cjs";
+import chalk from "chalk";
 
 /** Probes the file system to determine if it is case sensitive or not */
 function isFileSystemCaseSensitive() {
@@ -244,7 +245,7 @@ export class RapidApp {
         } catch (err) {
             // TODO(randomuserhi): Write HTTP header for rejection (e.g code 500 etc...)
             socket.destroy();
-            console.error(err);
+            console.error(`${chalk.grey("[Runtime]")} ${chalk.red(`Failed to upgrade '${req.url}':\n`)}`, err);
         }
     }
 
@@ -323,7 +324,7 @@ export class RapidApp {
         } catch (err) {
             res.statusCode = 500;
             res.end("Internal Package Error");
-            console.error(err);
+            console.error(`${chalk.grey("[Runtime]")} ${chalk.red(`Failed to handle '${req.url}':\n`)}`, err);
         }
     }
 }
@@ -382,21 +383,24 @@ export class RapidRuntime {
                     diagnostic.start!
                 );
                 const fileName = diagnostic.file.fileName;
-                console.log(`${fileName} (${line + 1},${character + 1}): ${message}`);
+                console.error(`${chalk.grey("[Typescript]")} ${chalk.red(`${fileName} (${line + 1},${character + 1}):\n`)}`, message);
             } else {
-                console.log(message);
+                console.log(`${chalk.grey("[Typescript]")} ${chalk.yellow(`${message}`)}`);
             }
         };
 
         // setup ASL environment
         this.environment.importHook = this.aslImportHook.bind(this);
+        this.environment.errorHook = (mid: ASLModuleId, error?: any) => {
+            console.error(`${chalk.grey("[ASLRuntime]")} ${chalk.red(registry.getPath(mid))}\n`, error);
+        };
 
-        // Manage invalidation on watcher builds
+        // Manage invalidation on builds
         const directoryPatterns: MapLike<string> = {};
         for (const directory of directories) {
             directoryPatterns[normalizePathPattern(Path.join(directory, "*"))] = directory;
         }
-        this.packageWatchBuilder.onIncrementalBuild = (paths) => {
+        const buildCallback = (paths: string[]) => {
             if (paths.length === 0) return;
 
             registry.invalidate(paths);
@@ -426,6 +430,8 @@ export class RapidRuntime {
 
             if (events.length > 0) this.broadcast("hotReload", events);
         };
+        this.packageWatchBuilder.onIncrementalBuild = buildCallback;
+        this.packageBuilder.onBuild = buildCallback;
     }
 
     /**
@@ -437,11 +443,15 @@ export class RapidRuntime {
             for (const entry of await File.readdir(directory, { withFileTypes: true })) {
                 if (!entry.isDirectory()) continue;
 
-                jobs.push(this.packageRegistry.findPckg(entry.name).then(info => {
+                jobs.push(this.packageRegistry.findPckg(entry.name).then(async info => {
                     if (info) {
-                        cleanPackage(this.packageRegistry, info, { cleanConfigFiles: true });
+                        try {
+                            await cleanPackage(this.packageRegistry, info, { cleanConfigFiles: true });
+                        } catch(err) {
+                            console.error(`${chalk.grey("[PackageBuilder]")} ${chalk.red(`Failed to clean '${info.name}':\n`)}`, err);
+                        }
                     }
-                    console.log(`Cleaned ${entry.name}`);
+                    console.log(`${chalk.grey("[PackageBuilder]")} Cleaned ${entry.name}`);
                 }));
             }
         }
@@ -452,20 +462,51 @@ export class RapidRuntime {
      * Builds all packages
      */
     public async buildAll() {
+        this.packageWatchBuilder.stop();
+
         const jobs: Promise<void>[] = [];
         for (const directory of this.packageRegistry.directories) {
             for (const entry of await File.readdir(directory, { withFileTypes: true })) {
                 if (!entry.isDirectory()) continue;
 
-                jobs.push(this.packageRegistry.findPckg(entry.name).then(info => {
+                jobs.push(this.packageRegistry.findPckg(entry.name).then(async info => {
                     if (info) {
-                        this.packageBuilder.build(this.packageRegistry, info);
+                        try {
+                            await this.packageBuilder.build(this.packageRegistry, info);
+                        } catch(err) {
+                            console.error(`${chalk.grey("[PackageBuilder]")} ${chalk.red(`Failed to build '${info.name}':\n`)}`, err);
+                        }
                     }
-                    console.log(`Built ${entry.name}`);
+                    console.log(`${chalk.grey("[PackageBuilder]")} Built ${entry.name}`);
                 }));
             }
         }
         await Promise.all(jobs);
+
+        this.packageWatchBuilder.start();
+    }
+
+    /** Get a packages app instance, starts the app if it has not been started already */
+    public async loadApp(pckgName: string) {
+        let app = this.apps.get(pckgName);
+        if (app === undefined) {
+            const pckgInfo = await this.packageRegistry.findPckg(pckgName);
+            if (pckgInfo === undefined) {
+                return app;
+            }
+
+            // Check again incase 2 async calls reach here at the same time
+            app = this.apps.get(pckgName);
+            if (app === undefined) {
+                // Auto watch launched apps
+                this.watch(pckgInfo.name);
+    
+                // Launch app instance
+                app = new RapidApp(this, pckgInfo);
+                this.apps.set(pckgName, app);
+            }
+        }
+        return app;
     }
 
     /**
@@ -473,12 +514,24 @@ export class RapidRuntime {
      * 
      * @param app
      */
-    private async loadEntry(app: RapidApp) {
+    public async loadEntry(app: RapidApp, reload: boolean = false) {
         if (app.entryPoint !== undefined) {
             // If we already have an entry point, check it loaded properly
             // If it has, then we do not need to load it again.
             const result = await app.entryPoint;
-            if (result.ok()) return;
+            if (result.ok()) {
+                if (reload) {
+                    // Reload the entry point
+                    const config = await app.pckgInfo.config(this.isWatching(app.pckgInfo));
+                    let entry = config.back?.entry;
+
+                    if (entry !== undefined) {
+                        entry = Path.join(app.pckgInfo.baseDir, ".build", "back", ASLPath.fixASLExt(entry));
+                        await this.environment.invalidate([entry]);
+                    }
+                }
+                return;
+            }
         }
 
         // Otherwise load the entry point
@@ -497,7 +550,7 @@ export class RapidRuntime {
             try {
                 await app.entryPoint;
             } catch(err) {
-                console.error(`Failed to launch entrypoint for '${app.pckgInfo.name}': `, err);
+                console.error(`${chalk.grey("[Runtime]")} Failed to launch entrypoint for '${app.pckgInfo.name}': `, err);
                 app.entryPoint = undefined;
             } 
         }
@@ -722,7 +775,7 @@ export class RapidRuntime {
         } catch(err) {
             // TODO(randomuserhi): Write HTTP header for rejection (e.g code 500 etc...)
             socket.destroy();
-            console.error(err);
+            console.error(`${chalk.grey("[Runtime]")} ${chalk.red(`Failed to upgrade '${req.url}':\n`)}`, err);
         }
     }
 
@@ -820,7 +873,7 @@ export class RapidRuntime {
         } catch (err) {
             res.statusCode = 500;
             res.end("Internal Server Error");
-            console.error(err);
+            console.error(`${chalk.grey("[Runtime]")} ${chalk.red(`Failed to handle '${req.url}':\n`)}`, err);
             return;
         }
     }
