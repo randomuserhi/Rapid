@@ -371,6 +371,8 @@ export class RapidRuntime {
             console.log(`${chalk.grey("[Runtime]")} Loaded '${directories[i]}'.`);
         }
 
+        console.log(`${chalk.grey("[Runtime]")} TypeDir '${typeDir}'.`);
+
         this.packageRegistry = new PackageRegistry(directories);
         this.packageWatchBuilder = new PackageWatchBuilder(this.packageRegistry, typeDir);
         this.packageBuilder = new PackageBuilder(typeDir);

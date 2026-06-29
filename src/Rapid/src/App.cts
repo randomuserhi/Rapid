@@ -31,7 +31,7 @@ export let runtime: RapidRuntime;
         .option("lib", {
             type: "string",
             describe: "Path to library types",
-            default: Path.join(Path.dirname(process.execPath), "./lib")
+            default: Path.resolve(Path.join(__dirname, "../lib"))
         })
         .option("packages", {
             type: "string",
