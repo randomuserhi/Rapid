@@ -738,7 +738,8 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                         "typescript": "typescript/typescript.d.ts",
                         "chokidar": "chokidar/index.d.ts",
                         "ws": "ws/index.d.ts",
-                        "better-sqlite3": "better-sqlite3/index.d.ts"
+                        "better-sqlite3": "better-sqlite3/index.d.ts",
+                        "node-cron": "node-cron/node-cron.d.ts"
                     },
                     pckg: info,
                     typeDir,
