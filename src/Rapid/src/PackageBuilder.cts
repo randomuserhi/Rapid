@@ -740,7 +740,6 @@ async function initPackage(registry: PackageRegistry, info: PackageInfo, typeDir
                         "ws": "ws/index.d.ts",
                         "better-sqlite3": "better-sqlite3/index.d.ts",
                         "node-cron": "node-cron/node-cron.d.ts",
-                        "date-fns": "date-fns/index.d.ts",
                     },
                     pckg: info,
                     typeDir,

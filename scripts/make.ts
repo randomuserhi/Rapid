@@ -84,7 +84,6 @@ try {
     await cp("./node_modules/@types/node", path.join(typesFolder, "node"), { recursive: true });
     await cp("./node_modules/@types/ws", path.join(typesFolder, "ws"), { recursive: true });
     await cp("./node_modules/@types/better-sqlite3", path.join(typesFolder, "better-sqlite3"), { recursive: true });
-    await cp("./node_modules/date-fns", path.join(typesFolder, "date-fns"), { recursive: true, filter: typeFilter });
     await cp("./node_modules/node-cron/dist/node-cron.d.ts", path.join(typesFolder, "node-cron/node-cron.d.ts"));
 
     // console.log("\nPreparing SEA dist...");
