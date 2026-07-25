@@ -23,7 +23,6 @@
     "@babel/preset-env": "^7.28.3",
     "@babel/template": "^7.27.2",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/date-fns": "^2.5.3",
     "@types/node": "^24.9.1",
     "@types/ws": "^8.18.1",
     "better-sqlite3": "^12.6.2",

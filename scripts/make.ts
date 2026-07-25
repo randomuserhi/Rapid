@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { cp, mkdir, rm } from 'fs/promises';
+import { cp, mkdir, rm, stat } from 'fs/promises';
 import path from "path";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
@@ -72,11 +72,19 @@ try {
     await mkdir(typesFolder);
     await cp("./src/@types", typesFolder, { recursive: true });
 
+    const typeFilter = async (source: string, destination: string) => { 
+        const info = await stat(source);
+        if (info.isDirectory()) {
+            return true;
+        }
+        return source.endsWith(".d.ts");
+    };
+
     await mkdir(path.join(typesFolder, "node"));
     await cp("./node_modules/@types/node", path.join(typesFolder, "node"), { recursive: true });
     await cp("./node_modules/@types/ws", path.join(typesFolder, "ws"), { recursive: true });
     await cp("./node_modules/@types/better-sqlite3", path.join(typesFolder, "better-sqlite3"), { recursive: true });
-    await cp("./node_modules/@types/date-fns", path.join(typesFolder, "date-fns"), { recursive: true });
+    await cp("./node_modules/date-fns", path.join(typesFolder, "date-fns"), { recursive: true, filter: typeFilter });
     await cp("./node_modules/node-cron/dist/node-cron.d.ts", path.join(typesFolder, "node-cron/node-cron.d.ts"));
 
     // console.log("\nPreparing SEA dist...");
